@@ -16,11 +16,11 @@ spec:
       tty: true
       resources:
         requests:
-          cpu: 500m
-          memory: 1Gi
+          cpu: 100m
+          memory: 512Mi
         limits:
-          cpu: "2"
-          memory: 3Gi
+          cpu: "1"
+          memory: 2Gi
     - name: kaniko
       image: gcr.io/kaniko-project/executor:v1.24.0-debug
       command: ["/busybox/sleep"]
@@ -28,11 +28,11 @@ spec:
       tty: true
       resources:
         requests:
-          cpu: 500m
+          cpu: 250m
           memory: 1Gi
         limits:
-          cpu: "2"
-          memory: 3Gi
+          cpu: "1"
+          memory: 2Gi
 '''
     }
   }

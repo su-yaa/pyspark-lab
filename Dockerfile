@@ -6,8 +6,7 @@ WORKDIR /opt/spark/work-dir
 # The base Spark image does not include Hadoop's S3A connector. We bake the
 # connector into the job image so Spark can write results to MinIO without
 # relying on runtime downloads from the cluster.
-ADD https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar /opt/spark/jars/
-ADD https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar /opt/spark/jars/
+RUN python3 -c "from urllib.request import urlretrieve; jars='/opt/spark/jars/'; urlretrieve('https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar', jars + 'hadoop-aws-3.3.4.jar'); urlretrieve('https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar', jars + 'aws-java-sdk-bundle-1.12.262.jar')"
 
 COPY pyproject.toml README.md ./
 COPY src ./src

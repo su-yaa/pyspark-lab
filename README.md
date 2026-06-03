@@ -53,4 +53,11 @@ Airflow DAG는 다음 이미지를 실행하도록 준비되어 있습니다.
 ghcr.io/su-yaa/pyspark-lab:main
 ```
 
-Jenkins에 GHCR credential을 붙이면 Kaniko로 이 이미지를 build/push하는 단계까지 확장합니다. 현재 예제 Pipeline은 credential이 없는 상태에서도 repo checkout, Python install, unit test, Dockerfile 준비 상태까지 검증합니다.
+Jenkins credential `GHCR`에 GitHub token(classic)을 Secret text로 등록하면 Pipeline이 Kaniko로 이미지를 build/push합니다.
+
+Pipeline이 push하는 태그:
+
+- `ghcr.io/su-yaa/pyspark-lab:<commit-sha>`
+- `ghcr.io/su-yaa/pyspark-lab:main`
+
+`main` 태그는 Airflow 예제 DAG가 바로 실행할 수 있도록 쓰는 연습용 moving tag이고, 운영형 배포에서는 commit SHA 태그를 DAG 또는 manifest에 고정하는 방식으로 바꾸는 것이 좋습니다.

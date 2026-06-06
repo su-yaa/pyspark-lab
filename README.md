@@ -130,7 +130,7 @@ Spark는 `spark.jars.packages` 설정으로 Spark 제출 시점에 Hadoop S3A co
 
 ## 로그로 보는 실행 흐름
 
-Airflow task 로그에서는 orchestration 흐름을 확인합니다.
+Airflow task 로그에서는 orchestration 흐름과 Spark driver 로그 중계를 같이 확인합니다.
 
 ```text
 [pyspark-lab-dag] Airflow DAG 실행을 시작합니다 | dag_id=..., run_id=..., run_date=...
@@ -139,10 +139,13 @@ Airflow task 로그에서는 orchestration 흐름을 확인합니다.
 [pyspark-lab-dag] SparkApplication을 제출했습니다 | app_name=pyspark-lab-daily-sales
 [pyspark-lab-dag] SparkApplication 상태가 변경되었습니다 | state=SUBMITTED, driver_pod=...
 [pyspark-lab-dag] SparkApplication 상태가 변경되었습니다 | state=RUNNING, driver_pod=...
+[pyspark-lab-dag] Spark driver pod 로그 중계를 시작합니다 | driver_pod=...
+[spark-driver] ... [pyspark-lab] 1/8 실행 파라미터를 해석했습니다 | run_date=..., output_uri=...
+[spark-driver] ... [pyspark-lab] 8/8 매출 지표를 MinIO/S3 경로에 저장했습니다 | output_path=...
 [pyspark-lab-dag] SparkApplication이 정상 완료되었습니다 | state=COMPLETED
 ```
 
-Spark driver 로그에서는 실제 데이터 처리 흐름을 확인합니다.
+`[pyspark-lab-dag]` prefix는 Airflow가 SparkApplication을 제출하고 감시하는 흐름이고, `[spark-driver]` prefix는 Spark driver pod에서 읽어온 실제 PySpark 실행 로그입니다. Spark driver 로그만 별도로 보고 싶으면 Kubernetes pod 로그를 직접 확인합니다.
 
 ```text
 [pyspark-lab] 1/8 실행 파라미터를 해석했습니다 | run_date=..., output_uri=...
@@ -155,7 +158,7 @@ Spark driver 로그에서는 실제 데이터 처리 흐름을 확인합니다.
 [pyspark-lab] 8/8 매출 지표를 MinIO/S3 경로에 저장했습니다 | output_path=...
 ```
 
-흐름을 추적할 때는 Airflow 로그로 “SparkApplication이 제출되고 완료됐는지”를 먼저 보고, Spark driver 로그로 “데이터 읽기, 품질검사, 지표 저장 중 어디까지 진행됐는지”를 확인하면 됩니다.
+흐름을 추적할 때는 Airflow 로그 한 화면에서 “SparkApplication이 제출되고 완료됐는지”와 “데이터 읽기, 품질검사, 지표 저장 중 어디까지 진행됐는지”를 같이 확인하면 됩니다.
 
 ## 이미지
 

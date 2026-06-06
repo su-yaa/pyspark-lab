@@ -77,15 +77,19 @@ Airflow는 `oracle-k8s-gitops`의 Helm values에 설정된 git-sync로 이 저�
 ## 주요 파일
 
 - `dags/pyspark_lab_daily_sales.py`: Airflow가 SparkApplication을 제출하고 완료까지 감시하는 DAG 소스
+- `dags/pyspark_lab_join_flow.py`: 실행 1, 실행 2 순서로 Spark join 흐름을 보여주는 DAG 소스
 - `dags/common/spark_application_factory.py`: DAG들이 공통으로 쓰는 SparkApplication manifest 생성 유틸
 - `dags/common/kubernetes_log_relay.py`: Airflow task 로그에 Kubernetes pod 로그를 함께 보여주는 공통 유틸
 - `spark/jobs/daily_sales/metrics.py`: SparkApplication driver pod에서 실행되는 PySpark entrypoint
+- `spark/jobs/join_flow/prepare_customers.py`: 실행 1, customer dimension을 MinIO에 저장하는 Spark entrypoint
+- `spark/jobs/join_flow/join_orders_customers.py`: 실행 2, 주문과 customer dimension을 join하는 Spark entrypoint
 - `src/pyspark_lab/pipelines/daily_sales/config.py`: Airflow가 넘긴 실행 파라미터를 Spark 작업 설정으로 정리
 - `src/pyspark_lab/pipelines/daily_sales/sample_data.py`: 예제 주문 데이터
 - `src/pyspark_lab/pipelines/daily_sales/quality.py`: 지표 저장 전에 실행하는 품질검사 결과 모델
+- `src/pyspark_lab/pipelines/join_flow/sample_data.py`: Spark join 흐름에서 사용하는 주문/고객 샘플 데이터
 - `Dockerfile`: Spark runtime 위에 이 repo의 job 코드를 올리는 이미지
 
-## Spark job 파라미터
+## Daily Sales Job
 
 ```bash
 python spark/jobs/daily_sales/metrics.py \
@@ -117,6 +121,20 @@ Kubernetes에서는 Airflow DAG가 위 job을 SparkApplication으로 제출합�
 s3a://pyspark-lab/daily-sales/run_date=YYYY-MM-DD/
 s3a://pyspark-lab/daily-sales/_quality/run_date=YYYY-MM-DD/
 ```
+
+## Join Flow Job
+
+`pyspark_lab_join_flow` DAG는 두 개의 SparkApplication을 순서대로 실행합니다.
+
+```text
+실행 1: customer dimension 생성
+-> s3a://pyspark-lab/join-flow/customer-dim/run_date=YYYY-MM-DD/
+
+실행 2: 주문 데이터와 customer dimension join
+-> s3a://pyspark-lab/join-flow/enriched-orders/run_date=YYYY-MM-DD/
+```
+
+실행 2는 실행 1의 결과 경로를 입력으로 받아 Spark `join` 연산을 수행합니다. Airflow task dependency로 `execution_1_prepare_customer_dim`이 성공해야 `execution_2_join_orders_with_customers`가 시작됩니다.
 
 Spark는 `spark.jars.packages` 설정으로 Spark 제출 시점에 Hadoop S3A connector를 받아 MinIO에 접속합니다. credential은 Kubernetes Secret `spark-minio-credentials`에서 환경변수로 주입하며, 로그에는 남기지 않습니다.
 

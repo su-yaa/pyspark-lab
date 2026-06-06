@@ -7,9 +7,9 @@ from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import DateType, IntegerType, StringType, StructField, StructType
 
-from pyspark_lab.config import DailySalesJobConfig
-from pyspark_lab.quality import require_minimum_rows
-from pyspark_lab.sample_data import SAMPLE_ORDERS
+from pyspark_lab.pipelines.daily_sales.config import DailySalesJobConfig
+from pyspark_lab.pipelines.daily_sales.quality import require_minimum_rows
+from pyspark_lab.pipelines.daily_sales.sample_data import SAMPLE_ORDERS
 
 
 def log_step(message: str, **details: object) -> None:
@@ -159,8 +159,7 @@ def main() -> None:
             )
 
         # 지표 계산은 Spark DataFrame API로 수행한다. groupBy/agg 단계가 실제
-        # 분산 처리의 핵심이며, pure Python 테스트 코드는 같은 비즈니스 규칙을
-        # 빠르게 검증하기 위한 보조 수단이다.
+        # 분산 처리의 핵심이며, 이 DAG 실행 단위의 비즈니스 로직이다.
         log_step("6/8 지역/채널별 일매출 지표 집계를 시작합니다")
         metrics_df = (
             scoped_orders_df

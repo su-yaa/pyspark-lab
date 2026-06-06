@@ -19,7 +19,7 @@ from kubernetes.client.exceptions import ApiException
 NAMESPACE = "data-lab"
 SPARK_APP_NAME = "pyspark-lab-daily-sales"
 SPARK_IMAGE = "ghcr.io/su-yaa/pyspark-lab:main"
-MAIN_APPLICATION_FILE = "local:///opt/spark/work-dir/spark/jobs/daily_sales_metrics.py"
+MAIN_APPLICATION_FILE = "local:///opt/spark/work-dir/spark/jobs/daily_sales/metrics.py"
 OUTPUT_URI = "s3a://pyspark-lab/daily-sales"
 DEFAULT_SAMPLE_RUN_DATE = "2026-06-03"
 SPARK_DRIVER_CONTAINER = "spark-kubernetes-driver"

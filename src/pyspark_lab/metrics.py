@@ -10,13 +10,15 @@ def build_daily_sales_metrics(
     orders: Iterable[dict],
     run_date: date,
 ) -> list[dict]:
-    """Aggregate order rows into daily metrics.
+    """주문 이벤트를 지역/채널별 일매출 지표로 집계한다.
 
-    The Spark job implements the same business rules with DataFrame APIs. Keeping
-    this small pure-Python version makes Jenkins tests fast and keeps the metric
-    definition readable for operators.
+    실제 운영 경로는 `jobs/daily_sales_metrics.py`의 Spark DataFrame 집계다.
+    이 순수 Python 함수는 같은 비즈니스 규칙을 빠르게 테스트하기 위한 기준점이며,
+    Jenkins에서 Spark 클러스터 없이도 지표 정의가 깨졌는지 확인할 수 있게 해준다.
     """
 
+    # key=(region, channel) 단위로 주문 수, 매출, 고객 집합을 누적한다.
+    # Spark 코드의 groupBy("region", "channel")와 같은 역할이다.
     groups: dict[tuple[str, str], dict] = defaultdict(
         lambda: {
             "order_count": 0,
@@ -26,6 +28,8 @@ def build_daily_sales_metrics(
     )
 
     for order in orders:
+        # Airflow가 넘긴 run_date만 처리한다. 과거/미래 데이터가 섞여 있어도
+        # 하나의 DAG run은 하나의 영업일 결과만 만든다.
         if order["order_date"] != run_date:
             continue
 
@@ -38,6 +42,7 @@ def build_daily_sales_metrics(
     for (region, channel), values in sorted(groups.items()):
         order_count = values["order_count"]
         gross_sales = values["gross_sales"]
+        # Decimal을 사용해 평균 주문금액 반올림을 명시적으로 고정한다.
         average_order_value = Decimal(gross_sales / order_count).quantize(
             Decimal("0.01"),
             rounding=ROUND_HALF_UP,
@@ -56,4 +61,3 @@ def build_daily_sales_metrics(
         )
 
     return rows
-

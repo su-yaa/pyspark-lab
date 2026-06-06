@@ -23,14 +23,16 @@ PySpark, Jenkins, Airflow, Spark Operator를 한 흐름으로 연습하기 위�
 
 실무형 구조를 보여주기 위해 Airflow DAG, Spark entrypoint, 비즈니스 로직, 데이터 품질검사, Jenkins 빌드 흐름을 한 저장소 안에 둡니다. 운영 클러스터 설정과 Secret, PVC, nodeSelector 같은 값은 `oracle-k8s-gitops`에서 관리합니다.
 
+Airflow는 `oracle-k8s-gitops`의 Helm values에 설정된 git-sync로 이 저장소의 `dags/` 디렉터리를 주기적으로 동기화합니다. 새 DAG를 만들 때는 GitOps YAML에 Python 코드를 넣지 않고, 이 저장소의 `dags/`에 파일을 추가한 뒤 `main` branch로 push합니다.
+
 ## 주요 파일
 
-- `src/pyspark_lab/config.py`: job 설정과 입력 파라미터 정의
+- `src/pyspark_lab/config.py`: Airflow가 넘긴 실행 파라미터를 Spark 작업 설정으로 정리
 - `src/pyspark_lab/sample_data.py`: 예제 주문 데이터
-- `src/pyspark_lab/metrics.py`: 순수 Python 기준 집계 로직
-- `src/pyspark_lab/quality.py`: job 실행 전후 품질검사 결과 모델
-- `jobs/daily_sales_metrics.py`: SparkApplication에서 실행되는 PySpark entrypoint
-- `dags/pyspark_lab_daily_sales.py`: Airflow가 SparkApplication을 제출하고 완료까지 감시하는 DAG
+- `src/pyspark_lab/metrics.py`: Spark 집계와 같은 비즈니스 규칙을 빠르게 검증하는 순수 Python 기준 로직
+- `src/pyspark_lab/quality.py`: 지표 저장 전에 실행하는 품질검사 결과 모델
+- `jobs/daily_sales_metrics.py`: SparkApplication driver pod에서 실행되는 PySpark entrypoint
+- `dags/pyspark_lab_daily_sales.py`: Airflow가 SparkApplication을 제출하고 완료까지 감시하는 DAG 소스
 - `tests/test_metrics.py`: Jenkins에서 실행되는 빠른 단위 테스트
 - `Dockerfile`: Spark runtime 위에 이 repo의 job 코드를 올리는 이미지
 - `Jenkinsfile`: 테스트 후 이미지 build/push까지 가는 Pipeline 초안
@@ -69,7 +71,36 @@ s3a://pyspark-lab/daily-sales/run_date=YYYY-MM-DD/
 s3a://pyspark-lab/daily-sales/_quality/run_date=YYYY-MM-DD/
 ```
 
-Spark는 이미지에 포함된 Hadoop S3A connector로 MinIO에 접속하고, credential은 Kubernetes Secret `spark-minio-credentials`에서 주입받습니다.
+Spark는 `spark.jars.packages` 설정으로 Spark 제출 시점에 Hadoop S3A connector를 받아 MinIO에 접속합니다. credential은 Kubernetes Secret `spark-minio-credentials`에서 환경변수로 주입하며, 로그에는 남기지 않습니다.
+
+## 로그로 보는 실행 흐름
+
+Airflow task 로그에서는 orchestration 흐름을 확인합니다.
+
+```text
+[pyspark-lab-dag] Airflow DAG 실행을 시작합니다 | dag_id=..., run_id=..., run_date=...
+[pyspark-lab-dag] SparkApplication manifest를 구성했습니다 | namespace=data-lab, app_name=pyspark-lab-daily-sales, image=...
+[pyspark-lab-dag] 이전 SparkApplication 정리를 시도합니다 | app_name=pyspark-lab-daily-sales
+[pyspark-lab-dag] SparkApplication을 제출했습니다 | app_name=pyspark-lab-daily-sales
+[pyspark-lab-dag] SparkApplication 상태가 변경되었습니다 | state=SUBMITTED, driver_pod=...
+[pyspark-lab-dag] SparkApplication 상태가 변경되었습니다 | state=RUNNING, driver_pod=...
+[pyspark-lab-dag] SparkApplication이 정상 완료되었습니다 | state=COMPLETED
+```
+
+Spark driver 로그에서는 실제 데이터 처리 흐름을 확인합니다.
+
+```text
+[pyspark-lab] 1/8 실행 파라미터를 해석했습니다 | run_date=..., output_uri=...
+[pyspark-lab] 2/8 SparkSession을 생성했습니다 | app_name=..., spark_version=...
+[pyspark-lab] 3/8 주문 데이터를 읽었습니다 | source=...
+[pyspark-lab] 4/8 실행일 기준 주문 데이터를 선별했습니다 | source_row_count=...
+[pyspark-lab] 5/8 품질검사 결과를 저장했습니다 | passed=True, quality_path=...
+[pyspark-lab] 6/8 지역/채널별 일매출 지표 집계를 시작합니다
+[pyspark-lab] 7/8 지표 집계를 완료했습니다 | metric_row_count=...
+[pyspark-lab] 8/8 매출 지표를 MinIO/S3 경로에 저장했습니다 | output_path=...
+```
+
+흐름을 추적할 때는 Airflow 로그로 “SparkApplication이 제출되고 완료됐는지”를 먼저 보고, Spark driver 로그로 “데이터 읽기, 품질검사, 지표 저장 중 어디까지 진행됐는지”를 확인하면 됩니다.
 
 ## GHCR 이미지
 
@@ -96,6 +127,7 @@ dags/
   - 언제 실행할지 결정
   - 어떤 image tag를 실행할지 결정
   - SparkApplication 생성/감시
+  - Airflow git-sync가 이 디렉터리를 클러스터로 동기화
 
 jobs/
   Spark entrypoint

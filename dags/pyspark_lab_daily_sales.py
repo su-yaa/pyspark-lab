@@ -15,6 +15,20 @@ SPARK_API_VERSION = "v1beta2"
 SPARK_PLURAL = "sparkapplications"
 
 
+def log_step(message: str, **details: object) -> None:
+    """Airflow task 로그에서 Spark 제출 흐름을 한 줄씩 추적하기 위한 함수."""
+
+    suffix = ""
+    if details:
+        rendered_details = ", ".join(
+            f"{key}={value}" for key, value in details.items() if value is not None
+        )
+        if rendered_details:
+            suffix = f" | {rendered_details}"
+
+    print(f"[pyspark-lab-dag] {message}{suffix}", flush=True)
+
+
 def build_spark_application(run_date: str, image: str) -> dict:
     """Spark Operator에 제출할 실행 계약을 만든다.
 
@@ -22,6 +36,8 @@ def build_spark_application(run_date: str, image: str) -> dict:
     컨테이너 이미지와 실행 파라미터를 SparkApplication으로 넘기는 편이
     운영 경계가 명확하다.
     """
+
+    output_uri = "s3a://pyspark-lab/daily-sales"
 
     return {
         "apiVersion": f"{SPARK_API_GROUP}/{SPARK_API_VERSION}",
@@ -46,7 +62,7 @@ def build_spark_application(run_date: str, image: str) -> dict:
                 "--run-date",
                 run_date,
                 "--output-uri",
-                "s3a://pyspark-lab/daily-sales",
+                output_uri,
                 "--min-orders",
                 "1",
             ],
@@ -59,8 +75,12 @@ def build_spark_application(run_date: str, image: str) -> dict:
             "sparkConf": {
                 "spark.eventLog.enabled": "true",
                 "spark.eventLog.dir": "file:/opt/spark-events",
+                # S3A connector는 이미지에 굽지 않고 Spark submit 시점에 받아서
+                # 이미지 빌드 속도와 실행 의존성 관리를 분리한다.
                 "spark.jars.packages": "org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262",
                 "spark.jars.ivy": "/tmp/.ivy2",
+                # Spark 결과 파일은 MinIO의 S3 호환 API로 저장한다.
+                # 인증값은 Secret에서 환경변수로 주입하므로 로그에 남기지 않는다.
                 "spark.hadoop.fs.s3a.endpoint": "http://minio.storage.svc.cluster.local:9000",
                 "spark.hadoop.fs.s3a.path.style.access": "true",
                 "spark.hadoop.fs.s3a.connection.ssl.enabled": "false",
@@ -129,6 +149,8 @@ def build_spark_application(run_date: str, image: str) -> dict:
 
 
 def spark_api() -> client.CustomObjectsApi:
+    """Airflow pod의 ServiceAccount 권한으로 SparkApplication API에 접근한다."""
+
     config.load_incluster_config()
     return client.CustomObjectsApi()
 
@@ -151,8 +173,30 @@ def pyspark_lab_daily_sales():
         image = "ghcr.io/su-yaa/pyspark-lab:main"
         api = spark_api()
         manifest = build_spark_application(run_date=run_date, image=image)
+        spec = manifest["spec"]
 
+        log_step(
+            "Airflow DAG 실행을 시작합니다",
+            dag_id=context["dag"].dag_id,
+            run_id=context["run_id"],
+            run_date=run_date,
+        )
+        log_step(
+            "SparkApplication manifest를 구성했습니다",
+            namespace=NAMESPACE,
+            app_name=SPARK_APP_NAME,
+            image=spec["image"],
+            main_file=spec["mainApplicationFile"],
+            output_uri=spec["arguments"][spec["arguments"].index("--output-uri") + 1],
+            driver_memory=spec["driver"]["memory"],
+            executor_instances=spec["executor"]["instances"],
+            executor_memory=spec["executor"]["memory"],
+        )
+
+        # 같은 이름의 SparkApplication은 Kubernetes에 하나만 존재할 수 있다.
+        # 이전 수동 실행 리소스가 남아 있으면 삭제한 뒤 새 실행을 제출한다.
         try:
+            log_step("이전 SparkApplication 정리를 시도합니다", app_name=SPARK_APP_NAME)
             api.delete_namespaced_custom_object(
                 group=SPARK_API_GROUP,
                 version=SPARK_API_VERSION,
@@ -161,9 +205,11 @@ def pyspark_lab_daily_sales():
                 name=SPARK_APP_NAME,
             )
             time.sleep(5)
+            log_step("이전 SparkApplication을 정리했습니다", app_name=SPARK_APP_NAME)
         except ApiException as exc:
             if exc.status != 404:
                 raise
+            log_step("정리할 이전 SparkApplication이 없습니다", app_name=SPARK_APP_NAME)
 
         api.create_namespaced_custom_object(
             group=SPARK_API_GROUP,
@@ -172,8 +218,10 @@ def pyspark_lab_daily_sales():
             plural=SPARK_PLURAL,
             body=manifest,
         )
+        log_step("SparkApplication을 제출했습니다", app_name=SPARK_APP_NAME)
 
         terminal_states = {"COMPLETED", "FAILED", "FAILING", "SUBMISSION_FAILED"}
+        last_state = None
         while True:
             spark_app = api.get_namespaced_custom_object(
                 group=SPARK_API_GROUP,
@@ -184,11 +232,23 @@ def pyspark_lab_daily_sales():
             )
             status = spark_app.get("status", {})
             state = status.get("applicationState", {}).get("state", "UNKNOWN")
-            print(f"SparkApplication {SPARK_APP_NAME} state={state}")
+            driver_info = status.get("driverInfo", {})
+
+            if state != last_state:
+                log_step(
+                    "SparkApplication 상태가 변경되었습니다",
+                    app_name=SPARK_APP_NAME,
+                    state=state,
+                    driver_pod=driver_info.get("podName"),
+                    web_ui=driver_info.get("webUIAddress"),
+                )
+                last_state = state
 
             if state in terminal_states:
                 if state != "COMPLETED":
+                    log_step("SparkApplication이 실패했습니다", app_name=SPARK_APP_NAME, state=state)
                     raise RuntimeError(f"SparkApplication failed: {status}")
+                log_step("SparkApplication이 정상 완료되었습니다", app_name=SPARK_APP_NAME, state=state)
                 return state
 
             time.sleep(10)

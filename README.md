@@ -19,6 +19,62 @@ PySpark, Jenkins, Airflow, Spark Operator를 한 흐름으로 연습하기 위�
 -> Airflow remote log는 MinIO에 저장
 ```
 
+## 실행 흐름 도식
+
+```mermaid
+flowchart TD
+    Dev["개발자<br/>pyspark-lab 코드/DAG 수정"] --> Push["GitHub push<br/>su-yaa/pyspark-lab main"]
+
+    Push --> Jenkins["Jenkins<br/>pyspark-lab Pipeline"]
+    Jenkins --> Test["Python 단위 테스트"]
+    Test --> Build["Kaniko 이미지 빌드"]
+    Build --> GHCR["GHCR<br/>ghcr.io/su-yaa/pyspark-lab:main"]
+
+    Push --> GitSync["Airflow git-sync<br/>pyspark-lab/dags 동기화"]
+    GitSync --> DagProcessor["Airflow dag-processor<br/>DAG 파싱/등록"]
+    DagProcessor --> AirflowUI["Airflow UI<br/>pyspark_lab_daily_sales 표시"]
+
+    User["사용자<br/>Airflow DAG 수동 실행"] --> AirflowUI
+    AirflowUI --> Scheduler["Airflow scheduler<br/>KubernetesExecutor"]
+
+    Scheduler --> WorkerPod["Airflow task worker pod<br/>submit_and_wait"]
+    WorkerPod --> WorkerGitSync["worker git-sync-init<br/>DAG repo 1회 동기화<br/>DNS 실패 시 최대 10회 재시도"]
+    WorkerGitSync --> SubmitTask["submit_and_wait 실행"]
+
+    SubmitTask --> RunDate{"run_date 결정"}
+    RunDate -->|DAG conf 있음| ConfDate["conf.run_date 사용"]
+    RunDate -->|수동 실행 기본| SampleDate["2026-06-03 사용<br/>샘플 데이터 기준일"]
+    RunDate -->|스케줄 실행| DsDate["Airflow ds 사용"]
+
+    ConfDate --> SparkApp["SparkApplication 생성"]
+    SampleDate --> SparkApp
+    DsDate --> SparkApp
+
+    SparkApp --> SparkOperator["Spark Operator"]
+    SparkOperator --> Driver["Spark driver pod<br/>PySpark entrypoint 실행"]
+    SparkOperator --> Executor["Spark executor pod"]
+
+    Driver --> ResolveDeps["spark.jars.packages<br/>S3A/Hadoop AWS dependency resolve"]
+    ResolveDeps --> ReadData["주문 데이터 읽기<br/>샘플 또는 input_uri"]
+    ReadData --> Quality["품질검사<br/>최소 주문 건수 확인"]
+    Quality -->|실패| QualityFail["Airflow 실패<br/>품질검사 결과는 MinIO에 저장"]
+    Quality -->|성공| Metrics["지역/채널별 일매출 집계"]
+
+    Metrics --> WriteMinIO["MinIO 결과 저장<br/>s3a://pyspark-lab/daily-sales"]
+    Quality --> WriteQuality["MinIO 품질결과 저장<br/>_quality/run_date=YYYY-MM-DD"]
+
+    Driver --> EventLogs["Spark event log PVC"]
+    EventLogs --> History["Spark History Server"]
+
+    WorkerPod --> RemoteLogs["Airflow remote logs<br/>MinIO airflow-logs bucket"]
+    WriteMinIO --> MinIOUI["MinIO Console"]
+    WriteQuality --> MinIOUI
+    RemoteLogs --> MinIOUI
+
+    SparkApp -->|COMPLETED| AirflowSuccess["Airflow DAG success"]
+    SparkApp -->|FAILED| AirflowFailed["Airflow DAG failed"]
+```
+
 이 예제는 작은 주문 데이터를 Spark DataFrame으로 만들고, 일자/지역/채널 단위 매출 지표를 계산합니다. 로컬 테스트에서는 순수 Python 함수로 비즈니스 규칙을 빠르게 검증하고, 클러스터 실행에서는 Airflow DAG가 Spark Operator에 SparkApplication을 제출합니다.
 
 실무형 구조를 보여주기 위해 Airflow DAG, Spark entrypoint, 비즈니스 로직, 데이터 품질검사, Jenkins 빌드 흐름을 한 저장소 안에 둡니다. 운영 클러스터 설정과 Secret, PVC, nodeSelector 같은 값은 `oracle-k8s-gitops`에서 관리합니다.

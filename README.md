@@ -76,19 +76,19 @@ Airflow는 `oracle-k8s-gitops`의 Helm values에 설정된 git-sync로 이 저�
 
 ## 주요 파일
 
+- `dags/pyspark_lab_daily_sales.py`: Airflow가 SparkApplication을 제출하고 완료까지 감시하는 DAG 소스
+- `dags/common/spark_application_factory.py`: DAG들이 공통으로 쓰는 SparkApplication manifest 생성 유틸
+- `dags/common/kubernetes_log_relay.py`: Airflow task 로그에 Kubernetes pod 로그를 함께 보여주는 공통 유틸
+- `spark/jobs/daily_sales_metrics.py`: SparkApplication driver pod에서 실행되는 PySpark entrypoint
 - `src/pyspark_lab/config.py`: Airflow가 넘긴 실행 파라미터를 Spark 작업 설정으로 정리
 - `src/pyspark_lab/sample_data.py`: 예제 주문 데이터
 - `src/pyspark_lab/quality.py`: 지표 저장 전에 실행하는 품질검사 결과 모델
-- `jobs/daily_sales_metrics.py`: SparkApplication driver pod에서 실행되는 PySpark entrypoint
-- `dags/pyspark_lab_daily_sales.py`: Airflow가 SparkApplication을 제출하고 완료까지 감시하는 DAG 소스
-- `dags/spark_application_factory.py`: DAG들이 공통으로 쓰는 SparkApplication manifest 생성 유틸
-- `dags/kubernetes_log_relay.py`: Airflow task 로그에 Kubernetes pod 로그를 함께 보여주는 공통 유틸
 - `Dockerfile`: Spark runtime 위에 이 repo의 job 코드를 올리는 이미지
 
 ## Spark job 파라미터
 
 ```bash
-python jobs/daily_sales_metrics.py \
+python spark/jobs/daily_sales_metrics.py \
   --run-date 2026-06-03 \
   --output-uri file:/tmp/pyspark-lab/daily-sales \
   --min-orders 1
@@ -97,7 +97,7 @@ python jobs/daily_sales_metrics.py \
 기본값은 repo 안의 sample order 데이터를 사용합니다. 외부 JSON 입력을 사용하려면 `--input-uri`를 넘깁니다.
 
 ```bash
-python jobs/daily_sales_metrics.py \
+python spark/jobs/daily_sales_metrics.py \
   --run-date 2026-06-03 \
   --input-uri file:/tmp/orders-json \
   --output-uri file:/tmp/pyspark-lab/daily-sales
@@ -163,7 +163,7 @@ ghcr.io/su-yaa/pyspark-lab:main
 GitHub Actions는 `main` branch에서 Spark 실행 이미지에 영향을 주는 파일이 바뀔 때 GHCR 이미지를 빌드하고 push합니다.
 
 ```text
-jobs/**
+spark/**
 src/**
 Dockerfile
 pyproject.toml
@@ -179,7 +179,7 @@ ghcr.io/su-yaa/pyspark-lab:<commit-sha>
 
 GitHub Actions repository secret `GHCR_TOKEN`이 필요합니다. token은 `ghcr.io/su-yaa/pyspark-lab`에 push할 수 있도록 `write:packages` 권한을 가진 GitHub token을 사용합니다.
 
-`dags/**`만 바뀐 경우에는 이미지 빌드가 필요 없고, Airflow git-sync가 DAG 변경을 가져갑니다. `jobs/**` 또는 `src/**`가 바뀐 경우에는 GitHub Actions 이미지 빌드가 끝난 뒤 DAG를 실행합니다.
+`dags/**`만 바뀐 경우에는 이미지 빌드가 필요 없고, Airflow git-sync가 DAG 변경을 가져갑니다. `spark/**` 또는 `src/**`가 바뀐 경우에는 GitHub Actions 이미지 빌드가 끝난 뒤 DAG를 실행합니다.
 
 ## 책임 분리
 
@@ -195,7 +195,7 @@ dags/
   - SparkJobSpec에 name, main_application_file, arguments 지정
   - build_pyspark_application()으로 SparkApplication 생성
 
-jobs/
+spark/jobs/
   Spark entrypoint
   - CLI argument를 job config로 변환
   - source read, quality check, write 담당

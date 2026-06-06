@@ -5,7 +5,7 @@ WORKDIR /opt/spark/work-dir
 
 COPY pyproject.toml README.md ./
 COPY src ./src
-COPY jobs ./jobs
+COPY spark ./spark
 COPY dags ./dags
 
 # Keep the runtime image small and deterministic. The Spark image already

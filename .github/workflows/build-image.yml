@@ -7,7 +7,7 @@ on:
     paths:
       - Dockerfile
       - pyproject.toml
-      - jobs/**
+      - spark/**
       - src/**
       - .github/workflows/build-image.yml
   workflow_dispatch:

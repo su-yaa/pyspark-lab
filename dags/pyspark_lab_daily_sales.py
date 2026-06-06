@@ -5,21 +5,21 @@ from datetime import timedelta
 
 import pendulum
 from airflow.sdk import dag, get_current_context, task
-from kubernetes import client, config
-from kubernetes.client.exceptions import ApiException
-from kubernetes_log_relay import PodLogRelay, build_core_api
-from spark_application_factory import (
+from common.kubernetes_log_relay import PodLogRelay, build_core_api
+from common.spark_application_factory import (
     SPARK_API_GROUP,
     SPARK_API_VERSION,
     SPARK_PLURAL,
     SparkJobSpec,
     build_pyspark_application,
 )
+from kubernetes import client, config
+from kubernetes.client.exceptions import ApiException
 
 NAMESPACE = "data-lab"
 SPARK_APP_NAME = "pyspark-lab-daily-sales"
 SPARK_IMAGE = "ghcr.io/su-yaa/pyspark-lab:main"
-MAIN_APPLICATION_FILE = "local:///opt/spark/work-dir/jobs/daily_sales_metrics.py"
+MAIN_APPLICATION_FILE = "local:///opt/spark/work-dir/spark/jobs/daily_sales_metrics.py"
 OUTPUT_URI = "s3a://pyspark-lab/daily-sales"
 DEFAULT_SAMPLE_RUN_DATE = "2026-06-03"
 SPARK_DRIVER_CONTAINER = "spark-kubernetes-driver"

@@ -56,14 +56,33 @@ jobs:
           password: ${{ secrets.GHCR_TOKEN }}
 
       - name: Build and push image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/arm64
-          push: true
-          tags: |
-            ${{ env.IMAGE_NAME }}:main
-            ${{ env.IMAGE_NAME }}:${{ github.sha }}
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
+        env:
+          IMAGE_MAIN: ${{ env.IMAGE_NAME }}:main
+          IMAGE_SHA: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          IMAGE_SOURCE: ${{ github.server_url }}/${{ github.repository }}
+          IMAGE_REVISION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          for attempt in 1 2 3; do
+            echo "Build attempt ${attempt}/3"
+            if docker buildx build \
+              --platform linux/arm64 \
+              --push \
+              --tag "${IMAGE_MAIN}" \
+              --tag "${IMAGE_SHA}" \
+              --label "org.opencontainers.image.source=${IMAGE_SOURCE}" \
+              --label "org.opencontainers.image.revision=${IMAGE_REVISION}" \
+              .; then
+              exit 0
+            fi
+
+            if [ "${attempt}" -lt 3 ]; then
+              sleep_seconds=$((attempt * 30))
+              echo "Build failed. Retrying in ${sleep_seconds}s..."
+              sleep "${sleep_seconds}"
+            fi
+          done
+
+          echo "Build failed after 3 attempts."
+          exit 1

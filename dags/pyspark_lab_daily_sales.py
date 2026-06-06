@@ -13,6 +13,7 @@ SPARK_APP_NAME = "pyspark-lab-daily-sales"
 SPARK_API_GROUP = "sparkoperator.k8s.io"
 SPARK_API_VERSION = "v1beta2"
 SPARK_PLURAL = "sparkapplications"
+DEFAULT_SAMPLE_RUN_DATE = "2026-06-03"
 
 
 def log_step(message: str, **details: object) -> None:
@@ -155,6 +156,27 @@ def spark_api() -> client.CustomObjectsApi:
     return client.CustomObjectsApi()
 
 
+def resolve_run_date(context: dict) -> str:
+    """DAG 실행일을 Spark job 파라미터로 변환한다.
+
+    운영 스케줄 실행은 Airflow의 `ds`를 그대로 쓰면 된다. 다만 이 저장소의
+    내장 샘플 데이터는 2026-06-03 기준이라, 수동 실행에서 run_date를 따로
+    넘기지 않으면 성공 예제를 바로 볼 수 있도록 샘플 날짜를 기본값으로 쓴다.
+    """
+
+    dag_run = context.get("dag_run")
+    dag_conf = getattr(dag_run, "conf", {}) or {}
+    configured_run_date = dag_conf.get("run_date")
+    if configured_run_date:
+        return str(configured_run_date)
+
+    run_type = str(getattr(dag_run, "run_type", "")).lower()
+    if "manual" in run_type:
+        return DEFAULT_SAMPLE_RUN_DATE
+
+    return context.get("ds") or DEFAULT_SAMPLE_RUN_DATE
+
+
 @dag(
     dag_id="pyspark_lab_daily_sales",
     description="Submit a production-shaped PySpark sales metrics job through Spark Operator.",
@@ -169,7 +191,7 @@ def pyspark_lab_daily_sales():
     @task
     def submit_and_wait() -> str:
         context = get_current_context()
-        run_date = context.get("ds") or pendulum.now("UTC").to_date_string()
+        run_date = resolve_run_date(context)
         image = "ghcr.io/su-yaa/pyspark-lab:main"
         api = spark_api()
         manifest = build_spark_application(run_date=run_date, image=image)

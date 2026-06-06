@@ -64,6 +64,12 @@ python jobs/daily_sales_metrics.py \
 
 Kubernetes에서는 Airflow DAG가 위 job을 SparkApplication으로 제출합니다. Spark job은 실행일 기준 source row 수를 검사하고, 품질검사 결과를 `_quality/run_date=...` 경로에 남긴 뒤 매출 지표를 `run_date=...` 파티션에 저장합니다.
 
+수동 실행에서는 내장 샘플 데이터가 있는 `2026-06-03`을 기본 `run_date`로 사용합니다. 다른 날짜를 실험하려면 Airflow DAG trigger conf에 다음처럼 넘깁니다.
+
+```json
+{"run_date": "2026-06-03"}
+```
+
 클러스터 실행에서는 결과 파일을 MinIO에 저장합니다.
 
 ```text

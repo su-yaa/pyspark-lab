@@ -28,6 +28,7 @@ class PodLogRelay:
     prefix: str = "[pod]"
     tail_lines: int = 200
     _emitted_lines: set[str] = field(default_factory=set, init=False)
+    _last_waiting_error: str | None = field(default=None, init=False)
 
     def reset(self) -> None:
         """새 pod 로그를 읽기 시작할 때 기존 중복 방지 상태를 초기화한다."""
@@ -61,11 +62,32 @@ class PodLogRelay:
                 # pod가 아직 생성 중이면 다음 polling에서 다시 시도한다.
                 return None
             if exc.status == 400 and self.container:
+                if _is_container_waiting_error(exc):
+                    self._print_waiting_error_once(exc)
+                    return None
                 # 이미지나 operator 버전에 따라 container 이름이 다를 수 있어 pod 기본 로그로 재시도한다.
-                return api.read_namespaced_pod_log(
-                    name=pod_name,
-                    namespace=self.namespace,
-                    timestamps=True,
-                    tail_lines=self.tail_lines,
-                )
+                try:
+                    return api.read_namespaced_pod_log(
+                        name=pod_name,
+                        namespace=self.namespace,
+                        timestamps=True,
+                        tail_lines=self.tail_lines,
+                    )
+                except ApiException as retry_exc:
+                    if retry_exc.status == 400 and _is_container_waiting_error(retry_exc):
+                        self._print_waiting_error_once(retry_exc)
+                        return None
+                    raise
             raise
+
+    def _print_waiting_error_once(self, exc: ApiException) -> None:
+        message = str(exc.body or exc.reason or "container is waiting to start")
+        if message == self._last_waiting_error:
+            return
+        self._last_waiting_error = message
+        print(f"{self.prefix} 컨테이너가 아직 시작되지 않아 로그를 읽지 않습니다 | {message}", flush=True)
+
+
+def _is_container_waiting_error(exc: ApiException) -> bool:
+    body = str(exc.body or exc.reason or "")
+    return "waiting to start" in body or "image can't be pulled" in body

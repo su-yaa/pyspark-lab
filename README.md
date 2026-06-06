@@ -176,6 +176,8 @@ ghcr.io/su-yaa/pyspark-lab:main
 ghcr.io/su-yaa/pyspark-lab:<commit-sha>
 ```
 
+GitHub Actions repository secret `GHCR_TOKEN`이 필요합니다. token은 `ghcr.io/su-yaa/pyspark-lab`에 push할 수 있도록 `write:packages` 권한을 가진 GitHub token을 사용합니다.
+
 `dags/**`만 바뀐 경우에는 이미지 빌드가 필요 없고, Airflow git-sync가 DAG 변경을 가져갑니다. `jobs/**` 또는 `src/**`가 바뀐 경우에는 GitHub Actions 이미지 빌드가 끝난 뒤 DAG를 실행합니다.
 
 ## 책임 분리

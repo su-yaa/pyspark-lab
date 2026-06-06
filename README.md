@@ -83,7 +83,6 @@ Airflow는 `oracle-k8s-gitops`의 Helm values에 설정된 git-sync로 이 저�
 - `dags/pyspark_lab_daily_sales.py`: Airflow가 SparkApplication을 제출하고 완료까지 감시하는 DAG 소스
 - `dags/kubernetes_log_relay.py`: Airflow task 로그에 Kubernetes pod 로그를 함께 보여주는 공통 유틸
 - `Dockerfile`: Spark runtime 위에 이 repo의 job 코드를 올리는 이미지
-- `Jenkinsfile`: 이미지 빌드 자동화를 연습할 때만 사용하는 선택 구성
 
 ## Spark job 파라미터
 
@@ -152,20 +151,13 @@ Airflow task 로그에서는 orchestration 흐름과 Spark driver 로그 중계�
 
 흐름을 추적할 때는 Airflow 로그 한 화면에서 “SparkApplication이 제출되고 완료됐는지”와 “데이터 읽기, 품질검사, 지표 저장 중 어디까지 진행됐는지”를 같이 확인하면 됩니다.
 
-## 이미지
+## 실행 이미지
 
 Airflow DAG는 다음 이미지를 실행하도록 준비되어 있습니다.
 
 ```text
 ghcr.io/su-yaa/pyspark-lab:main
 ```
-
-현재 핵심 연습 흐름에서는 DAG 개발과 Spark 실행 흐름을 먼저 봅니다. 이미지 빌드 자동화가 필요할 때만 Jenkins Pipeline을 사용합니다.
-
-Jenkins Pipeline을 사용할 경우 push하는 태그:
-
-- `ghcr.io/su-yaa/pyspark-lab:<commit-sha>`
-- `ghcr.io/su-yaa/pyspark-lab:main`
 
 `main` 태그는 Airflow 예제 DAG가 바로 실행할 수 있도록 쓰는 연습용 moving tag입니다.
 
@@ -188,11 +180,6 @@ src/
   Business logic
   - 집계 규칙
   - 품질검사 모델
-  - 테스트 가능한 순수 함수
-
-optional/
-  Jenkins/GHCR
-  - Spark 실행 이미지 자동 빌드가 필요할 때만 사용
 ```
 
 Airflow worker가 Spark 계산을 직접 수행하지 않고 Spark Operator에 제출하는 이유는 실행 책임을 Kubernetes driver/executor pod로 넘기기 위해서입니다. 이 구조가 되어야 Airflow는 orchestration에 집중하고, Spark는 확장 가능한 계산에 집중합니다.

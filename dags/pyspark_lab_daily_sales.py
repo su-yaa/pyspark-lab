@@ -8,12 +8,19 @@ from airflow.sdk import dag, get_current_context, task
 from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
 from kubernetes_log_relay import PodLogRelay, build_core_api
+from spark_application_factory import (
+    SPARK_API_GROUP,
+    SPARK_API_VERSION,
+    SPARK_PLURAL,
+    SparkJobSpec,
+    build_pyspark_application,
+)
 
 NAMESPACE = "data-lab"
 SPARK_APP_NAME = "pyspark-lab-daily-sales"
-SPARK_API_GROUP = "sparkoperator.k8s.io"
-SPARK_API_VERSION = "v1beta2"
-SPARK_PLURAL = "sparkapplications"
+SPARK_IMAGE = "ghcr.io/su-yaa/pyspark-lab:main"
+MAIN_APPLICATION_FILE = "local:///opt/spark/work-dir/jobs/daily_sales_metrics.py"
+OUTPUT_URI = "s3a://pyspark-lab/daily-sales"
 DEFAULT_SAMPLE_RUN_DATE = "2026-06-03"
 SPARK_DRIVER_CONTAINER = "spark-kubernetes-driver"
 DRIVER_LOG_TAIL_LINES = 200
@@ -31,125 +38,6 @@ def log_step(message: str, **details: object) -> None:
             suffix = f" | {rendered_details}"
 
     print(f"[pyspark-lab-dag] {message}{suffix}", flush=True)
-
-
-def build_spark_application(run_date: str, image: str) -> dict:
-    """Spark Operator에 제출할 실행 계약을 만든다.
-
-    실무에서는 DAG가 Spark 코드를 직접 import해서 실행하기보다, 검증된
-    컨테이너 이미지와 실행 파라미터를 SparkApplication으로 넘기는 편이
-    운영 경계가 명확하다.
-    """
-
-    output_uri = "s3a://pyspark-lab/daily-sales"
-
-    return {
-        "apiVersion": f"{SPARK_API_GROUP}/{SPARK_API_VERSION}",
-        "kind": "SparkApplication",
-        "metadata": {
-            "name": SPARK_APP_NAME,
-            "namespace": NAMESPACE,
-            "labels": {
-                "app.kubernetes.io/name": "pyspark-lab",
-                "app.kubernetes.io/managed-by": "airflow",
-                "pyspark-lab/run-date": run_date,
-            },
-        },
-        "spec": {
-            "type": "Python",
-            "mode": "cluster",
-            "image": image,
-            "imagePullPolicy": "Always",
-            "imagePullSecrets": ["ghcr-pyspark-lab"],
-            "mainApplicationFile": "local:///opt/spark/work-dir/jobs/daily_sales_metrics.py",
-            "arguments": [
-                "--run-date",
-                run_date,
-                "--output-uri",
-                output_uri,
-                "--min-orders",
-                "1",
-            ],
-            "sparkVersion": "3.5.1",
-            "restartPolicy": {"type": "Never"},
-            "timeToLiveSeconds": 3600,
-            "nodeSelector": {
-                "kubernetes.io/hostname": "ubuntu",
-            },
-            "sparkConf": {
-                "spark.eventLog.enabled": "true",
-                "spark.eventLog.dir": "file:/opt/spark-events",
-                # S3A connector는 이미지에 굽지 않고 Spark submit 시점에 받아서
-                # 이미지 빌드 속도와 실행 의존성 관리를 분리한다.
-                "spark.jars.packages": "org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262",
-                "spark.jars.ivy": "/tmp/.ivy2",
-                # Spark 결과 파일은 MinIO의 S3 호환 API로 저장한다.
-                # 인증값은 Secret에서 환경변수로 주입하므로 로그에 남기지 않는다.
-                "spark.hadoop.fs.s3a.endpoint": "http://minio.storage.svc.cluster.local:9000",
-                "spark.hadoop.fs.s3a.path.style.access": "true",
-                "spark.hadoop.fs.s3a.connection.ssl.enabled": "false",
-                "spark.hadoop.fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem",
-                "spark.hadoop.fs.s3a.aws.credentials.provider": "com.amazonaws.auth.EnvironmentVariableCredentialsProvider",
-                "spark.kubernetes.container.image.pullSecrets": "ghcr-pyspark-lab",
-                "spark.kubernetes.driverEnv.PYTHONPATH": "/opt/spark/work-dir/src",
-                "spark.executorEnv.PYTHONPATH": "/opt/spark/work-dir/src",
-            },
-            "volumes": [
-                {
-                    "name": "event-logs",
-                    "persistentVolumeClaim": {
-                        "claimName": "spark-event-logs",
-                    },
-                },
-            ],
-            "driver": {
-                "serviceAccount": "spark",
-                "cores": 1,
-                "coreRequest": "250m",
-                "memory": "512m",
-                "labels": {"app.kubernetes.io/name": "pyspark-lab"},
-                "envSecretKeyRefs": {
-                    "AWS_ACCESS_KEY_ID": {
-                        "name": "spark-minio-credentials",
-                        "key": "AWS_ACCESS_KEY_ID",
-                    },
-                    "AWS_SECRET_ACCESS_KEY": {
-                        "name": "spark-minio-credentials",
-                        "key": "AWS_SECRET_ACCESS_KEY",
-                    },
-                },
-                "volumeMounts": [
-                    {
-                        "name": "event-logs",
-                        "mountPath": "/opt/spark-events",
-                    },
-                ],
-            },
-            "executor": {
-                "instances": 1,
-                "cores": 1,
-                "coreRequest": "250m",
-                "memory": "512m",
-                "labels": {"app.kubernetes.io/name": "pyspark-lab"},
-                "envSecretKeyRefs": {
-                    "AWS_ACCESS_KEY_ID": {
-                        "name": "spark-minio-credentials",
-                        "key": "AWS_ACCESS_KEY_ID",
-                    },
-                    "AWS_SECRET_ACCESS_KEY": {
-                        "name": "spark-minio-credentials",
-                        "key": "AWS_SECRET_ACCESS_KEY",
-                    },
-                },
-                "volumeMounts": [
-                    {
-                        "name": "event-logs",
-                        "mountPath": "/opt/spark-events",
-                    },
-                ],
-            },
-        },
-    }
 
 
 def spark_api() -> client.CustomObjectsApi:
@@ -195,7 +83,6 @@ def pyspark_lab_daily_sales():
     def submit_and_wait() -> str:
         context = get_current_context()
         run_date = resolve_run_date(context)
-        image = "ghcr.io/su-yaa/pyspark-lab:main"
         api = spark_api()
         pod_api = build_core_api()
         driver_log_relay = PodLogRelay(
@@ -204,7 +91,22 @@ def pyspark_lab_daily_sales():
             prefix="[spark-driver]",
             tail_lines=DRIVER_LOG_TAIL_LINES,
         )
-        manifest = build_spark_application(run_date=run_date, image=image)
+        spark_job = SparkJobSpec(
+            name=SPARK_APP_NAME,
+            namespace=NAMESPACE,
+            image=SPARK_IMAGE,
+            main_application_file=MAIN_APPLICATION_FILE,
+            arguments=[
+                "--run-date",
+                run_date,
+                "--output-uri",
+                OUTPUT_URI,
+                "--min-orders",
+                "1",
+            ],
+            run_date=run_date,
+        )
+        manifest = build_pyspark_application(spark_job)
         spec = manifest["spec"]
 
         log_step(
@@ -219,7 +121,7 @@ def pyspark_lab_daily_sales():
             app_name=SPARK_APP_NAME,
             image=spec["image"],
             main_file=spec["mainApplicationFile"],
-            output_uri=spec["arguments"][spec["arguments"].index("--output-uri") + 1],
+            output_uri=OUTPUT_URI,
             driver_memory=spec["driver"]["memory"],
             executor_instances=spec["executor"]["instances"],
             executor_memory=spec["executor"]["memory"],

@@ -81,6 +81,7 @@ Airflow는 `oracle-k8s-gitops`의 Helm values에 설정된 git-sync로 이 저�
 - `src/pyspark_lab/quality.py`: 지표 저장 전에 실행하는 품질검사 결과 모델
 - `jobs/daily_sales_metrics.py`: SparkApplication driver pod에서 실행되는 PySpark entrypoint
 - `dags/pyspark_lab_daily_sales.py`: Airflow가 SparkApplication을 제출하고 완료까지 감시하는 DAG 소스
+- `dags/spark_application_factory.py`: DAG들이 공통으로 쓰는 SparkApplication manifest 생성 유틸
 - `dags/kubernetes_log_relay.py`: Airflow task 로그에 Kubernetes pod 로그를 함께 보여주는 공통 유틸
 - `Dockerfile`: Spark runtime 위에 이 repo의 job 코드를 올리는 이미지
 
@@ -187,8 +188,12 @@ dags/
   Airflow orchestration
   - 언제 실행할지 결정
   - 어떤 image tag를 실행할지 결정
-  - SparkApplication 생성/감시
+  - SparkJobSpec으로 SparkApplication 생성/감시
   - Airflow git-sync가 이 디렉터리를 클러스터로 동기화
+
+  새 DAG 추가 시
+  - SparkJobSpec에 name, main_application_file, arguments 지정
+  - build_pyspark_application()으로 SparkApplication 생성
 
 jobs/
   Spark entrypoint

@@ -159,7 +159,24 @@ Airflow DAG는 다음 이미지를 실행하도록 준비되어 있습니다.
 ghcr.io/su-yaa/pyspark-lab:main
 ```
 
-`main` 태그는 Airflow 예제 DAG가 바로 실행할 수 있도록 쓰는 연습용 moving tag입니다.
+GitHub Actions는 `main` branch에서 Spark 실행 이미지에 영향을 주는 파일이 바뀔 때 GHCR 이미지를 빌드하고 push합니다.
+
+```text
+jobs/**
+src/**
+Dockerfile
+pyproject.toml
+.github/workflows/build-image.yml
+```
+
+push되는 태그:
+
+```text
+ghcr.io/su-yaa/pyspark-lab:main
+ghcr.io/su-yaa/pyspark-lab:<commit-sha>
+```
+
+`dags/**`만 바뀐 경우에는 이미지 빌드가 필요 없고, Airflow git-sync가 DAG 변경을 가져갑니다. `jobs/**` 또는 `src/**`가 바뀐 경우에는 GitHub Actions 이미지 빌드가 끝난 뒤 DAG를 실행합니다.
 
 ## 책임 분리
 

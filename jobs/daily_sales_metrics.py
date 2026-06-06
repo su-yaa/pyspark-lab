@@ -40,7 +40,7 @@ def parse_args() -> DailySalesJobConfig:
     parser.add_argument(
         "--output-uri",
         default="file:/tmp/pyspark-lab/daily-sales",
-        help="Output base URI. Airflow sets this to the shared Spark event PVC path.",
+        help="Output base URI. Airflow sets this to the MinIO/S3 daily sales path.",
     )
     parser.add_argument(
         "--input-uri",

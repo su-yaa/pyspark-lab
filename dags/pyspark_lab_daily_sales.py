@@ -7,6 +7,7 @@ import pendulum
 from airflow.sdk import dag, get_current_context, task
 from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
+from kubernetes_log_relay import PodLogRelay, build_core_api
 
 NAMESPACE = "data-lab"
 SPARK_APP_NAME = "pyspark-lab-daily-sales"
@@ -158,57 +159,6 @@ def spark_api() -> client.CustomObjectsApi:
     return client.CustomObjectsApi()
 
 
-def core_api() -> client.CoreV1Api:
-    """Airflow pod의 ServiceAccount 권한으로 Kubernetes pod/log API에 접근한다."""
-
-    config.load_incluster_config()
-    return client.CoreV1Api()
-
-
-def relay_driver_logs(
-    api: client.CoreV1Api,
-    namespace: str,
-    pod_name: str,
-    emitted_lines: set[str],
-) -> None:
-    """Spark driver pod 로그를 Airflow task 로그로 중계한다.
-
-    Airflow는 SparkApplication을 제출하고 기다리는 역할만 맡기 때문에,
-    PySpark 내부 처리 로그는 기본적으로 Spark driver pod에 남는다. 사용자가
-    Airflow UI 한 화면에서 전체 흐름을 볼 수 있도록 driver 로그를 읽어서
-    `[spark-driver]` prefix로 다시 출력한다.
-    """
-
-    try:
-        raw_logs = api.read_namespaced_pod_log(
-            name=pod_name,
-            namespace=namespace,
-            container=SPARK_DRIVER_CONTAINER,
-            timestamps=True,
-            tail_lines=DRIVER_LOG_TAIL_LINES,
-        )
-    except ApiException as exc:
-        if exc.status == 404:
-            # driver pod가 아직 생성 중이면 다음 polling에서 다시 시도한다.
-            return
-        if exc.status == 400:
-            # Spark 이미지나 operator 버전에 따라 container 이름이 다를 수 있어 pod 기본 로그로 재시도한다.
-            raw_logs = api.read_namespaced_pod_log(
-                name=pod_name,
-                namespace=namespace,
-                timestamps=True,
-                tail_lines=DRIVER_LOG_TAIL_LINES,
-            )
-        else:
-            raise
-
-    for line in raw_logs.splitlines():
-        if not line or line in emitted_lines:
-            continue
-        emitted_lines.add(line)
-        print(f"[spark-driver] {line}", flush=True)
-
-
 def resolve_run_date(context: dict) -> str:
     """DAG 실행일을 Spark job 파라미터로 변환한다.
 
@@ -247,7 +197,13 @@ def pyspark_lab_daily_sales():
         run_date = resolve_run_date(context)
         image = "ghcr.io/su-yaa/pyspark-lab:main"
         api = spark_api()
-        pod_api = core_api()
+        pod_api = build_core_api()
+        driver_log_relay = PodLogRelay(
+            namespace=NAMESPACE,
+            container=SPARK_DRIVER_CONTAINER,
+            prefix="[spark-driver]",
+            tail_lines=DRIVER_LOG_TAIL_LINES,
+        )
         manifest = build_spark_application(run_date=run_date, image=image)
         spec = manifest["spec"]
 
@@ -299,7 +255,6 @@ def pyspark_lab_daily_sales():
         terminal_states = {"COMPLETED", "FAILED", "FAILING", "SUBMISSION_FAILED"}
         last_state = None
         last_driver_pod = None
-        emitted_driver_log_lines: set[str] = set()
         while True:
             spark_app = api.get_namespaced_custom_object(
                 group=SPARK_API_GROUP,
@@ -325,24 +280,14 @@ def pyspark_lab_daily_sales():
 
             if driver_pod:
                 if driver_pod != last_driver_pod:
-                    emitted_driver_log_lines.clear()
+                    driver_log_relay.reset()
                     log_step("Spark driver pod 로그 중계를 시작합니다", driver_pod=driver_pod)
                     last_driver_pod = driver_pod
-                relay_driver_logs(
-                    api=pod_api,
-                    namespace=NAMESPACE,
-                    pod_name=driver_pod,
-                    emitted_lines=emitted_driver_log_lines,
-                )
+                driver_log_relay.relay(api=pod_api, pod_name=driver_pod)
 
             if state in terminal_states:
                 if driver_pod:
-                    relay_driver_logs(
-                        api=pod_api,
-                        namespace=NAMESPACE,
-                        pod_name=driver_pod,
-                        emitted_lines=emitted_driver_log_lines,
-                    )
+                    driver_log_relay.relay(api=pod_api, pod_name=driver_pod)
                 if state != "COMPLETED":
                     log_step("SparkApplication이 실패했습니다", app_name=SPARK_APP_NAME, state=state)
                     raise RuntimeError(f"SparkApplication failed: {status}")

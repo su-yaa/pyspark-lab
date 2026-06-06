@@ -68,7 +68,7 @@ flowchart TD
     SparkApp -->|FAILED| AirflowFailed["Airflow DAG failed"]
 ```
 
-이 예제는 작은 주문 데이터를 Spark DataFrame으로 만들고, 일자/지역/채널 단위 매출 지표를 계산합니다. 로컬 테스트에서는 순수 Python 함수로 비즈니스 규칙을 빠르게 검증하고, 클러스터 실행에서는 Airflow DAG가 Spark Operator에 SparkApplication을 제출합니다.
+이 예제는 작은 주문 데이터를 Spark DataFrame으로 만들고, 일자/지역/채널 단위 매출 지표를 계산합니다. 클러스터 실행에서는 Airflow DAG가 Spark Operator에 SparkApplication을 제출합니다.
 
 핵심 흐름은 `pyspark-lab repo -> Airflow git-sync -> Spark Operator -> MinIO`입니다. 운영 클러스터 설정과 Secret, PVC, nodeSelector 같은 값은 `oracle-k8s-gitops`에서 관리합니다.
 
@@ -78,21 +78,12 @@ Airflow는 `oracle-k8s-gitops`의 Helm values에 설정된 git-sync로 이 저�
 
 - `src/pyspark_lab/config.py`: Airflow가 넘긴 실행 파라미터를 Spark 작업 설정으로 정리
 - `src/pyspark_lab/sample_data.py`: 예제 주문 데이터
-- `src/pyspark_lab/metrics.py`: Spark 집계와 같은 비즈니스 규칙을 빠르게 검증하는 순수 Python 기준 로직
 - `src/pyspark_lab/quality.py`: 지표 저장 전에 실행하는 품질검사 결과 모델
 - `jobs/daily_sales_metrics.py`: SparkApplication driver pod에서 실행되는 PySpark entrypoint
 - `dags/pyspark_lab_daily_sales.py`: Airflow가 SparkApplication을 제출하고 완료까지 감시하는 DAG 소스
 - `dags/kubernetes_log_relay.py`: Airflow task 로그에 Kubernetes pod 로그를 함께 보여주는 공통 유틸
-- `tests/test_metrics.py`: 집계 규칙을 빠르게 확인하는 단위 테스트
 - `Dockerfile`: Spark runtime 위에 이 repo의 job 코드를 올리는 이미지
 - `Jenkinsfile`: 이미지 빌드 자동화를 연습할 때만 사용하는 선택 구성
-
-## 로컬 테스트
-
-```bash
-python -m pip install -e ".[dev]"
-pytest -q
-```
 
 ## Spark job 파라미터
 

@@ -47,29 +47,6 @@ spec:
   }
 
   stages {
-    stage('Install') {
-      steps {
-        sh '''
-          set -eux
-          # Jenkins agent pod는 매 빌드마다 새로 뜨므로 필요한 도구를 명시적으로 설치한다.
-          apt-get update
-          apt-get install -y --no-install-recommends git ca-certificates
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
-        '''
-      }
-    }
-
-    stage('Test') {
-      steps {
-        sh '''
-          set -eux
-          # Spark cluster에 올리기 전, 빠른 단위 테스트로 metric 규칙을 먼저 검증한다.
-          pytest -q
-        '''
-      }
-    }
-
     stage('Build and Push Image') {
       steps {
         container('kaniko') {

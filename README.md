@@ -1,16 +1,14 @@
 # pyspark-lab
 
-PySpark, Jenkins, Airflow, Spark Operator를 한 흐름으로 연습하기 위한 예제 저장소입니다.
+PySpark, Airflow, Spark Operator, MinIO를 한 흐름으로 연습하기 위한 예제 저장소입니다.
 
 ## 전체 흐름
 
 ```text
 개발자
 -> pyspark-lab repo push
--> Jenkins Pipeline
--> Python test
--> Spark 실행 이미지 build/push
--> Airflow DAG 실행
+-> Airflow git-sync가 dags/ 동기화
+-> Airflow DAG 수동 실행
 -> SparkApplication 생성
 -> Spark driver/executor pod 실행
 -> 데이터 품질검사와 매출 지표 저장
@@ -24,11 +22,6 @@ PySpark, Jenkins, Airflow, Spark Operator를 한 흐름으로 연습하기 위�
 ```mermaid
 flowchart TD
     Dev["개발자<br/>pyspark-lab 코드/DAG 수정"] --> Push["GitHub push<br/>su-yaa/pyspark-lab main"]
-
-    Push --> Jenkins["Jenkins<br/>pyspark-lab Pipeline"]
-    Jenkins --> Test["Python 단위 테스트"]
-    Test --> Build["Kaniko 이미지 빌드"]
-    Build --> GHCR["GHCR<br/>ghcr.io/su-yaa/pyspark-lab:main"]
 
     Push --> GitSync["Airflow git-sync<br/>pyspark-lab/dags 동기화"]
     GitSync --> DagProcessor["Airflow dag-processor<br/>DAG 파싱/등록"]
@@ -77,7 +70,7 @@ flowchart TD
 
 이 예제는 작은 주문 데이터를 Spark DataFrame으로 만들고, 일자/지역/채널 단위 매출 지표를 계산합니다. 로컬 테스트에서는 순수 Python 함수로 비즈니스 규칙을 빠르게 검증하고, 클러스터 실행에서는 Airflow DAG가 Spark Operator에 SparkApplication을 제출합니다.
 
-실무형 구조를 보여주기 위해 Airflow DAG, Spark entrypoint, 비즈니스 로직, 데이터 품질검사, Jenkins 빌드 흐름을 한 저장소 안에 둡니다. 운영 클러스터 설정과 Secret, PVC, nodeSelector 같은 값은 `oracle-k8s-gitops`에서 관리합니다.
+핵심 흐름은 `pyspark-lab repo -> Airflow git-sync -> Spark Operator -> MinIO`입니다. 운영 클러스터 설정과 Secret, PVC, nodeSelector 같은 값은 `oracle-k8s-gitops`에서 관리합니다.
 
 Airflow는 `oracle-k8s-gitops`의 Helm values에 설정된 git-sync로 이 저장소의 `dags/` 디렉터리를 주기적으로 동기화합니다. 새 DAG를 만들 때는 GitOps YAML에 Python 코드를 넣지 않고, 이 저장소의 `dags/`에 파일을 추가한 뒤 `main` branch로 push합니다.
 
@@ -89,9 +82,9 @@ Airflow는 `oracle-k8s-gitops`의 Helm values에 설정된 git-sync로 이 저�
 - `src/pyspark_lab/quality.py`: 지표 저장 전에 실행하는 품질검사 결과 모델
 - `jobs/daily_sales_metrics.py`: SparkApplication driver pod에서 실행되는 PySpark entrypoint
 - `dags/pyspark_lab_daily_sales.py`: Airflow가 SparkApplication을 제출하고 완료까지 감시하는 DAG 소스
-- `tests/test_metrics.py`: Jenkins에서 실행되는 빠른 단위 테스트
+- `tests/test_metrics.py`: 집계 규칙을 빠르게 확인하는 단위 테스트
 - `Dockerfile`: Spark runtime 위에 이 repo의 job 코드를 올리는 이미지
-- `Jenkinsfile`: 테스트 후 이미지 build/push까지 가는 Pipeline 초안
+- `Jenkinsfile`: 이미지 빌드 자동화를 연습할 때만 사용하는 선택 구성
 
 ## 로컬 테스트
 
@@ -164,7 +157,7 @@ Spark driver 로그에서는 실제 데이터 처리 흐름을 확인합니다.
 
 흐름을 추적할 때는 Airflow 로그로 “SparkApplication이 제출되고 완료됐는지”를 먼저 보고, Spark driver 로그로 “데이터 읽기, 품질검사, 지표 저장 중 어디까지 진행됐는지”를 확인하면 됩니다.
 
-## GHCR 이미지
+## 이미지
 
 Airflow DAG는 다음 이미지를 실행하도록 준비되어 있습니다.
 
@@ -172,16 +165,16 @@ Airflow DAG는 다음 이미지를 실행하도록 준비되어 있습니다.
 ghcr.io/su-yaa/pyspark-lab:main
 ```
 
-Jenkins credential `GHCR`에 GitHub token(classic)을 Secret text로 등록하면 Pipeline이 Kaniko로 이미지를 build/push합니다.
+현재 핵심 연습 흐름에서는 DAG 개발과 Spark 실행 흐름을 먼저 봅니다. 이미지 빌드 자동화가 필요할 때만 Jenkins Pipeline을 사용합니다.
 
-Pipeline이 push하는 태그:
+Jenkins Pipeline을 사용할 경우 push하는 태그:
 
 - `ghcr.io/su-yaa/pyspark-lab:<commit-sha>`
 - `ghcr.io/su-yaa/pyspark-lab:main`
 
-`main` 태그는 Airflow 예제 DAG가 바로 실행할 수 있도록 쓰는 연습용 moving tag이고, 운영형 배포에서는 commit SHA 태그를 DAG 또는 manifest에 고정하는 방식으로 바꾸는 것이 좋습니다.
+`main` 태그는 Airflow 예제 DAG가 바로 실행할 수 있도록 쓰는 연습용 moving tag입니다.
 
-## 실무에서 보는 책임 분리
+## 책임 분리
 
 ```text
 dags/
@@ -201,6 +194,10 @@ src/
   - 집계 규칙
   - 품질검사 모델
   - 테스트 가능한 순수 함수
+
+optional/
+  Jenkins/GHCR
+  - Spark 실행 이미지 자동 빌드가 필요할 때만 사용
 ```
 
 Airflow worker가 Spark 계산을 직접 수행하지 않고 Spark Operator에 제출하는 이유는 실행 책임을 Kubernetes driver/executor pod로 넘기기 위해서입니다. 이 구조가 되어야 Airflow는 orchestration에 집중하고, Spark는 확장 가능한 계산에 집중합니다.

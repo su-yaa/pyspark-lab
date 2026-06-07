@@ -62,6 +62,11 @@ def main() -> None:
 
         customer_dim_df = spark.read.json(args.customer_dim_uri)
         log_step("3/6 실행 1 결과 customer dimension을 읽었습니다", customer_count=customer_dim_df.count())
+        
+        log_step("### join 전 데이터 시각화 ###")
+        
+        scoped_orders_df.show(truncate=False)
+        customer_dim_df.show(truncate=False)
 
         enriched_df = (
             scoped_orders_df.alias("orders")

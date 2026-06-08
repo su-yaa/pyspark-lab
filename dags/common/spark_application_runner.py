@@ -16,7 +16,7 @@ from kubernetes.client.exceptions import ApiException
 
 
 SPARK_DRIVER_CONTAINER = "spark-kubernetes-driver"
-DRIVER_LOG_TAIL_LINES = 200
+DRIVER_LOG_TAIL_LINES = 1000
 TERMINAL_STATES = {"COMPLETED", "FAILED", "FAILING", "SUBMISSION_FAILED"}
 
 

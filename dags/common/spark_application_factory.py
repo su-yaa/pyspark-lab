@@ -88,8 +88,6 @@ def _spark_conf(image_pull_secret: str) -> dict[str, str]:
     return {
         "spark.eventLog.enabled": "true",
         "spark.eventLog.dir": "file:/opt/spark-events",
-        "spark.jars.packages": "org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262",
-        "spark.jars.ivy": "/tmp/.ivy2",
         "spark.hadoop.fs.s3a.endpoint": "http://minio.storage.svc.cluster.local:9000",
         "spark.hadoop.fs.s3a.path.style.access": "true",
         "spark.hadoop.fs.s3a.connection.ssl.enabled": "false",

@@ -5,6 +5,7 @@ from datetime import timedelta
 
 import pendulum
 from airflow.sdk import dag, get_current_context, task
+from common.asset_events import emit_output_asset_event, minio_asset
 from common.kubernetes_log_relay import PodLogRelay, build_core_api
 from common.spark_application_factory import (
     SPARK_API_GROUP,
@@ -21,9 +22,18 @@ SPARK_APP_NAME = "pyspark-lab-daily-sales"
 SPARK_IMAGE = "ghcr.io/su-yaa/pyspark-lab:main"
 MAIN_APPLICATION_FILE = "local:///opt/spark/work-dir/spark/jobs/daily_sales/metrics.py"
 OUTPUT_URI = "s3a://pyspark-lab/daily-sales"
+QUALITY_URI = f"{OUTPUT_URI}/_quality"
 DEFAULT_SAMPLE_RUN_DATE = "2026-06-03"
 SPARK_DRIVER_CONTAINER = "spark-kubernetes-driver"
 DRIVER_LOG_TAIL_LINES = 200
+DAILY_SALES_ASSET = minio_asset(
+    name="pyspark_lab_daily_sales",
+    uri=OUTPUT_URI,
+)
+DAILY_SALES_QUALITY_ASSET = minio_asset(
+    name="pyspark_lab_daily_sales_quality",
+    uri=QUALITY_URI,
+)
 
 
 def log_step(message: str, **details: object) -> None:
@@ -79,8 +89,8 @@ def resolve_run_date(context: dict) -> str:
     tags=["data-lab", "pyspark", "spark-operator"],
 )
 def pyspark_lab_daily_sales():
-    @task
-    def submit_and_wait() -> str:
+    @task(outlets=[DAILY_SALES_ASSET, DAILY_SALES_QUALITY_ASSET])
+    def submit_and_wait(*, outlet_events) -> str:
         context = get_current_context()
         run_date = resolve_run_date(context)
         api = spark_api()
@@ -194,6 +204,23 @@ def pyspark_lab_daily_sales():
                     log_step("SparkApplication이 실패했습니다", app_name=SPARK_APP_NAME, state=state)
                     raise RuntimeError(f"SparkApplication failed: {status}")
                 log_step("SparkApplication이 정상 완료되었습니다", app_name=SPARK_APP_NAME, state=state)
+                emit_output_asset_event(
+                    outlet_events=outlet_events,
+                    asset=DAILY_SALES_ASSET,
+                    run_date=run_date,
+                    output_uri=OUTPUT_URI,
+                    spark_application=SPARK_APP_NAME,
+                    spark_state=state,
+                )
+                emit_output_asset_event(
+                    outlet_events=outlet_events,
+                    asset=DAILY_SALES_QUALITY_ASSET,
+                    run_date=run_date,
+                    output_uri=QUALITY_URI,
+                    spark_application=SPARK_APP_NAME,
+                    spark_state=state,
+                    extra={"quality_for_asset": DAILY_SALES_ASSET.uri},
+                )
                 return state
 
             time.sleep(10)

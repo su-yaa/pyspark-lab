@@ -65,14 +65,9 @@ def main() -> None:
         
         log_step("### join 전 데이터 시각화 ###")
         
-        log_step("orders_df preview")
-        for row in scoped_orders_df.toJSON().collect():
-            log_step("orders_df row", row=row)
-
-        log_step("customer_dim_df preview")
-        for row in customer_dim_df.toJSON().collect():
-            log_step("customer_dim_df row", row=row)
-
+        orders_df.show(truncate=False)
+        customer_dim_df.show(truncate=False)
+        
         enriched_df = (
             scoped_orders_df.alias("orders")
             .join(customer_dim_df.alias("customers"), on="customer_id", how="left")

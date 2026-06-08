@@ -4,7 +4,7 @@ from datetime import timedelta
 
 import pendulum
 from airflow.sdk import dag, get_current_context, task
-from common.asset_events import emit_output_asset_event, minio_asset, partitioned_output_path
+from common.asset_events import emit_output_asset_event, minio_asset_alias, partitioned_output_path
 from common.spark_application_factory import SparkJobSpec
 from common.spark_application_runner import build_spark_api, submit_and_wait_for_spark_application
 
@@ -21,14 +21,10 @@ JOIN_MAIN_FILE = "local:///opt/spark/work-dir/spark/jobs/join_flow/join_orders_c
 CUSTOMER_DIM_URI = "s3a://pyspark-lab/join-flow/customer-dim"
 JOIN_OUTPUT_URI = "s3a://pyspark-lab/join-flow/enriched-orders"
 
-CUSTOMER_DIM_ASSET = minio_asset(
-    name="pyspark_lab_join_flow_customer_dim",
-    uri=CUSTOMER_DIM_URI,
-)
-ENRICHED_ORDERS_ASSET = minio_asset(
-    name="pyspark_lab_join_flow_enriched_orders",
-    uri=JOIN_OUTPUT_URI,
-)
+CUSTOMER_DIM_ASSET_NAME = "pyspark_lab_join_flow_customer_dim"
+ENRICHED_ORDERS_ASSET_NAME = "pyspark_lab_join_flow_enriched_orders"
+CUSTOMER_DIM_ASSET_ALIAS = minio_asset_alias(name=CUSTOMER_DIM_ASSET_NAME)
+ENRICHED_ORDERS_ASSET_ALIAS = minio_asset_alias(name=ENRICHED_ORDERS_ASSET_NAME)
 
 
 def resolve_run_date(context: dict) -> str:
@@ -58,7 +54,7 @@ def resolve_run_date(context: dict) -> str:
     tags=["data-lab", "pyspark", "spark-operator", "join"],
 )
 def pyspark_lab_join_flow():
-    @task(outlets=[CUSTOMER_DIM_ASSET])
+    @task(outlets=[CUSTOMER_DIM_ASSET_ALIAS])
     def execution_1_prepare_customer_dim(*, outlet_events) -> dict[str, str]:
         context = get_current_context()
         run_date = resolve_run_date(context)
@@ -93,7 +89,8 @@ def pyspark_lab_join_flow():
         )
         emit_output_asset_event(
             outlet_events=outlet_events,
-            asset=CUSTOMER_DIM_ASSET,
+            asset_alias=CUSTOMER_DIM_ASSET_ALIAS,
+            asset_name=CUSTOMER_DIM_ASSET_NAME,
             run_date=run_date,
             output_uri=CUSTOMER_DIM_URI,
             spark_application=result.app_name,
@@ -105,7 +102,7 @@ def pyspark_lab_join_flow():
             "state": result.state,
         }
 
-    @task(outlets=[ENRICHED_ORDERS_ASSET])
+    @task(outlets=[ENRICHED_ORDERS_ASSET_ALIAS])
     def execution_2_join_orders_with_customers(
         execution_1: dict[str, str],
         *,
@@ -142,7 +139,8 @@ def pyspark_lab_join_flow():
         )
         emit_output_asset_event(
             outlet_events=outlet_events,
-            asset=ENRICHED_ORDERS_ASSET,
+            asset_alias=ENRICHED_ORDERS_ASSET_ALIAS,
+            asset_name=ENRICHED_ORDERS_ASSET_NAME,
             run_date=run_date,
             output_uri=JOIN_OUTPUT_URI,
             spark_application=result.app_name,

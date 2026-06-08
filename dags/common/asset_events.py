@@ -2,19 +2,20 @@ from __future__ import annotations
 
 from typing import Any
 
-from airflow.sdk import Asset
+from airflow.sdk import AssetAlias
 
 
-def minio_asset(*, name: str, uri: str) -> Asset:
-    """Create an Airflow asset for a MinIO/S3 output location."""
+def minio_asset_alias(*, name: str) -> AssetAlias:
+    """Create a lightweight outlet alias without validating storage providers."""
 
-    return Asset(name=name, uri=to_airflow_asset_uri(uri))
+    return AssetAlias(name)
 
 
 def emit_output_asset_event(
     *,
     outlet_events: Any,
-    asset: Asset,
+    asset_alias: AssetAlias,
+    asset_name: str,
     run_date: str,
     output_uri: str,
     spark_application: str,
@@ -36,10 +37,13 @@ def emit_output_asset_event(
     if extra:
         event_extra.update(extra)
 
-    outlet_events[asset].extra = event_extra
+    from airflow.sdk import Asset
+
+    emitted_asset = Asset(name=asset_name, uri=event_extra["output_uri"])
+    outlet_events[asset_alias].add(emitted_asset, extra=event_extra)
     print(
         "[pyspark-lab-dag] Asset event metadata was attached | "
-        f"asset={asset.uri}, output_path={event_extra['output_path']}, run_date={run_date}",
+        f"asset={emitted_asset.uri}, output_path={event_extra['output_path']}, run_date={run_date}",
         flush=True,
     )
     return event_extra

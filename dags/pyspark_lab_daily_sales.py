@@ -5,7 +5,7 @@ from datetime import timedelta
 
 import pendulum
 from airflow.sdk import dag, get_current_context, task
-from common.asset_events import emit_output_asset_event, minio_asset
+from common.asset_events import emit_output_asset_event, minio_asset_alias, to_airflow_asset_uri
 from common.kubernetes_log_relay import PodLogRelay, build_core_api
 from common.spark_application_factory import (
     SPARK_API_GROUP,
@@ -26,14 +26,10 @@ QUALITY_URI = f"{OUTPUT_URI}/_quality"
 DEFAULT_SAMPLE_RUN_DATE = "2026-06-03"
 SPARK_DRIVER_CONTAINER = "spark-kubernetes-driver"
 DRIVER_LOG_TAIL_LINES = 200
-DAILY_SALES_ASSET = minio_asset(
-    name="pyspark_lab_daily_sales",
-    uri=OUTPUT_URI,
-)
-DAILY_SALES_QUALITY_ASSET = minio_asset(
-    name="pyspark_lab_daily_sales_quality",
-    uri=QUALITY_URI,
-)
+DAILY_SALES_ASSET_NAME = "pyspark_lab_daily_sales"
+DAILY_SALES_QUALITY_ASSET_NAME = "pyspark_lab_daily_sales_quality"
+DAILY_SALES_ASSET_ALIAS = minio_asset_alias(name=DAILY_SALES_ASSET_NAME)
+DAILY_SALES_QUALITY_ASSET_ALIAS = minio_asset_alias(name=DAILY_SALES_QUALITY_ASSET_NAME)
 
 
 def log_step(message: str, **details: object) -> None:
@@ -89,7 +85,7 @@ def resolve_run_date(context: dict) -> str:
     tags=["data-lab", "pyspark", "spark-operator"],
 )
 def pyspark_lab_daily_sales():
-    @task(outlets=[DAILY_SALES_ASSET, DAILY_SALES_QUALITY_ASSET])
+    @task(outlets=[DAILY_SALES_ASSET_ALIAS, DAILY_SALES_QUALITY_ASSET_ALIAS])
     def submit_and_wait(*, outlet_events) -> str:
         context = get_current_context()
         run_date = resolve_run_date(context)
@@ -206,7 +202,8 @@ def pyspark_lab_daily_sales():
                 log_step("SparkApplication이 정상 완료되었습니다", app_name=SPARK_APP_NAME, state=state)
                 emit_output_asset_event(
                     outlet_events=outlet_events,
-                    asset=DAILY_SALES_ASSET,
+                    asset_alias=DAILY_SALES_ASSET_ALIAS,
+                    asset_name=DAILY_SALES_ASSET_NAME,
                     run_date=run_date,
                     output_uri=OUTPUT_URI,
                     spark_application=SPARK_APP_NAME,
@@ -214,12 +211,13 @@ def pyspark_lab_daily_sales():
                 )
                 emit_output_asset_event(
                     outlet_events=outlet_events,
-                    asset=DAILY_SALES_QUALITY_ASSET,
+                    asset_alias=DAILY_SALES_QUALITY_ASSET_ALIAS,
+                    asset_name=DAILY_SALES_QUALITY_ASSET_NAME,
                     run_date=run_date,
                     output_uri=QUALITY_URI,
                     spark_application=SPARK_APP_NAME,
                     spark_state=state,
-                    extra={"quality_for_asset": DAILY_SALES_ASSET.uri},
+                    extra={"quality_for_asset": to_airflow_asset_uri(OUTPUT_URI)},
                 )
                 return state
 

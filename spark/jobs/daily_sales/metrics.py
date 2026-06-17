@@ -13,7 +13,7 @@ from pyspark_lab.pipelines.daily_sales.sample_data import SAMPLE_ORDERS
 
 
 def log_step(message: str, **details: object) -> None:
-    """Airflow/Spark 로그에서 실행 흐름을 한 줄씩 추적하기 위한 공통 로그 함수."""
+    """Airflow/Spark 로그에서 실행 흐름을 한 줄씩 추적하기 위한 공통 로그 함수.."""
 
     suffix = ""
     if details:

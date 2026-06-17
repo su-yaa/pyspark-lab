@@ -5,7 +5,7 @@ import pendulum
 from datetime import timedelta
 from airflow import DAG
 from airflow.operators.empty import EmptyOperator
-from airflow.operators.python import PythonOperator
+from airflow.operators.python import PythonOperator, BranchPythonOperator
 from common.kubernetes_log_relay import PodLogRelay, build_core_api
 from common.spark_application_factory import (
     SPARK_API_GROUP,
@@ -54,8 +54,11 @@ def resolve_run_date(**context) -> str:
     return context.get("ds") or DEFAULT_SAMPLE_RUN_DATE
 
 
-def submit_spark_job(**context) -> None:
-    """PythonOperator에서 호출되어 SparkApplication 리소스를 생성하고 폴링하여 기다리는 함수."""
+def submit_spark_job(**context) -> str:
+    """PythonOperator에서 호출되어 SparkApplication 리소스를 생성하고 폴링하여 기다리는 함수.
+
+    실행 성공 여부에 따라 분기하기 위해 최종 결과를 문자열로 반환(XCom에 저장)합니다.
+    """
     run_date = resolve_run_date(**context)
     config.load_incluster_config()
     api = client.CustomObjectsApi()
@@ -148,32 +151,84 @@ def submit_spark_job(**context) -> None:
             if driver_pod:
                 driver_log_relay.relay(api=pod_api, pod_name=driver_pod)
             if state != "COMPLETED":
-                raise RuntimeError(f"SparkApplication failed with state: {state}")
+                log_step("SparkApplication이 실패했습니다", app_name=SPARK_APP_NAME)
+                return "FAILED"
             log_step("SparkApplication이 성공적으로 완료되었습니다", app_name=SPARK_APP_NAME)
-            break
+            return "SUCCESS"
 
         time.sleep(10)
+
+
+def decide_branch(**context) -> str:
+    """이전 태스크(run_spark_job)의 결과값(XCom)을 읽어와 다음 실행할 태스크의 ID를 반환합니다."""
+    ti = context["ti"]
+    spark_result = ti.xcom_pull(task_ids="run_spark_job")
+    log_step("이전 Spark 태스크 결과 확인", result=spark_result)
+
+    if spark_result == "SUCCESS":
+        return "happy_path"
+    else:
+        return "error_path"
+
+
+def run_happy() -> None:
+    print("Spark Job이 성공적으로 완료되어 Happy Path 태스크를 실행합니다.", flush=True)
+
+
+def run_error() -> None:
+    print("Spark Job이 실패했거나 알 수 없는 상태여서 Error Path 태스크를 실행합니다.", flush=True)
 
 
 # 클래식(레거시) DAG 설정 및 >> 사용법 예시
 with DAG(
     dag_id="pyspark_lab_legacy",
-    description="A legacy Airflow DAG running PySpark job using >> operator",
+    description="A legacy Airflow DAG running PySpark job with branching using >> operator",
     start_date=pendulum.datetime(2026, 1, 1, tz="UTC"),
     schedule=None,
     catchup=False,
-    tags=["legacy", "pyspark", "spark-operator"],
+    tags=["legacy", "pyspark", "spark-operator", "branching"],
 ) as dag:
 
     start_task = EmptyOperator(task_id="start")
 
-    # PythonOperator를 사용해 Spark Job 실행 태스크 정의
+    # Spark Job을 제출하는 메인 태스크
     spark_job_task = PythonOperator(
         task_id="run_spark_job",
         python_callable=submit_spark_job,
     )
 
-    end_task = EmptyOperator(task_id="end")
+    # 결과에 따라 다음 태스크의 분기를 결정하는 BranchPythonOperator
+    branch_task = BranchPythonOperator(
+        task_id="branch_decision",
+        python_callable=decide_branch,
+    )
 
-    # >> 문법을 사용한 태스크 의존성(Flow) 구성
-    start_task >> spark_job_task >> end_task
+    # 성공 분기 시 실행될 태스크
+    happy_path_task = PythonOperator(
+        task_id="happy_path",
+        python_callable=run_happy,
+    )
+
+    # 실패 분기 시 실행될 태스크
+    error_path_task = PythonOperator(
+        task_id="error_path",
+        python_callable=run_error,
+    )
+
+    # 분기 흐름이 다시 모이는 최종 엔드포인트
+    # trigger_rule="none_failed_min_one_success"를 지정하여
+    # 분기에서 하나의 태스크가 스킵되더라도 엔드포인트가 정상 실행되도록 합니다.
+    end_task = EmptyOperator(
+        task_id="end",
+        trigger_rule="none_failed_min_one_success",
+    )
+
+    # 1. 기본 선행 흐름 연결
+    start_task >> spark_job_task >> branch_task
+
+    # 2. [태스크, 태스크] 형태의 병렬/분기 의존성 구성 (>> [] 구조)
+    branch_task >> [happy_path_task, error_path_task]
+
+    # 3. 분기된 태스크가 다시 하나로 합류
+    happy_path_task >> end_task
+    error_path_task >> end_task

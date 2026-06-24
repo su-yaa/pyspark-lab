@@ -13,6 +13,9 @@ dependencies = []
 spark = [
   "pyspark==3.5.1",
 ]
+aws = [
+  "apache-airflow-providers-amazon>=8.12.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

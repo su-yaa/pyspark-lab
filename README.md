@@ -224,5 +224,36 @@ src/pyspark_lab/pipelines/<pipeline>/
   - 입력 데이터/스키마/품질검사 모델
   - 집계 규칙과 저장 정책
 ```
-
 Airflow worker가 Spark 계산을 직접 수행하지 않고 Spark Operator에 제출하는 이유는 실행 책임을 Kubernetes driver/executor pod로 넘기기 위해서입니다. 이 구조가 되어야 Airflow는 orchestration에 집중하고, Spark는 확장 가능한 계산에 집중합니다.
+
+## AWS EMR on EC2 연동 및 모니터링 실습
+
+프로젝트의 PySpark 작업을 AWS EMR on EC2 클러스터 상에서 실행하고, 실행되는 동안 서버 메트릭 모니터링을 실습할 수 있도록 [pyspark_lab_aws_emr.py](file:///Users/su/CodexProjects/pyspark-lab/dags/pyspark_lab_aws_emr.py) DAG가 제공됩니다.
+
+### 1. 작동 방식
+1. **코드 패키징 및 업로드**: 로컬의 `src/pyspark_lab/` 패키지를 ZIP으로 압축하여 메인 스크립트와 함께 지정된 S3 버킷으로 업로드합니다.
+2. **EMR 클러스터 동적 기동**: `EmrCreateJobFlowOperator`를 사용해 Primary(Master) 1대, Core 2대, Task 1대 인프라를 갖춘 EMR 클러스터를 생성합니다. 비용 절감을 위해 모든 인스턴스는 **Spot 인스턴스**로 기동됩니다.
+3. **Step 제출 및 센싱**: `EmrAddStepsOperator`로 Spark 작업을 제출한 후 `EmrStepSensor`로 상태를 모니터링합니다.
+4. **수동 모니터링을 위한 클러스터 유지**: 모니터링 및 분석 실습 목적을 위해 기본적으로 Spark Job 완료 후에도 클러스터가 자동 터미네이트되지 않고 유지되도록 설정(`KeepJobFlowAliveWhenNoSteps=True`)되어 있습니다. 분석이 끝난 후 수동으로 클러스터를 삭제하거나 Airflow에서 종료 태스크로 진행해야 합니다.
+
+### 2. 준비 사항
+* **AWS Connection**: Airflow에 `aws_default` 커넥션을 등록해야 하며, S3 및 EMR 제어 권한을 가지고 있어야 합니다.
+* **EMR Default Roles**: EMR 클러스터 프로비저닝을 위해 AWS 계정에 `EMR_EC2_DefaultRole` 및 `EMR_DefaultRole`이 생성되어 있어야 합니다. (존재하지 않을 경우 AWS CLI에서 `aws emr create-default-roles` 명령을 수행하세요.)
+
+### 3. DAG 트리거 및 실행 설정
+DAG를 수동 실행 시 `Trigger DAG w/ config`를 선택하여 아래와 같이 설정을 주입할 수 있습니다.
+```json
+{
+  "s3_bucket": "my-emr-pyspark-lab-bucket",
+  "emr_release_label": "emr-6.13.0",
+  "master_instance_type": "m5.xlarge",
+  "core_instance_type": "m5.xlarge",
+  "core_instance_count": 2,
+  "task_instance_type": "m5.xlarge",
+  "task_instance_count": 1,
+  "keep_job_flow_alive": true,
+  "run_date": "2026-06-03"
+}
+```
+* `keep_job_flow_alive`를 `false`로 설정하면 Spark Step 완료 후 EMR 클러스터가 즉시 자동 종료됩니다.
+* 설정을 주입하지 않는 경우 Airflow Variables에서 `pyspark_lab_s3_bucket`을 조회하며 그 외 값은 기본값을 사용합니다.

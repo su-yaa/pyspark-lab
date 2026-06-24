@@ -17,7 +17,7 @@ from airflow.providers.amazon.aws.operators.emr import (
 from airflow.providers.amazon.aws.sensors.emr import EmrStepSensor
 
 # 기본 환경값 및 변수 기본값 정의
-DEFAULT_AWS_CONN_ID = "aws_default"
+DEFAULT_AWS_CONN_ID = "aws_emr_test"
 DEFAULT_RUN_DATE = "2026-06-03"
 
 def log_step(message: str, **details: object) -> None:

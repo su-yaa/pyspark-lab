@@ -44,7 +44,7 @@ def resolve_s3_bucket(dag_conf: dict) -> str:
         except Exception:
             s3_bucket = None
             
-    # 3. AWS Connection ('aws_default')의 Extra JSON 필드 확인
+    # 3. AWS Connection ('aws_emr_test')의 Extra JSON 필드 확인
     if not s3_bucket:
         try:
             from airflow.hooks.base import BaseHook
@@ -77,10 +77,13 @@ def resolve_s3_bucket(dag_conf: dict) -> str:
 def pyspark_lab_aws_emr():
     
     @task
-    def package_source_code() -> str:
-        """EMR에서 참조할 수 있도록 로컬 src/pyspark_lab folder를 ZIP 파일로 압축합니다."""
-        log_step("1. 로컬 소스 코드 패키징을 시작합니다.")
+    def prepare_and_upload_assets() -> dict[str, str]:
+        """분산 실행 환경(KubernetesExecutor 등)에서 로컬 파일 유실을 막기 위해,
+        단일 태스크 내부에서 코드 ZIP 패키징과 S3 업로드(boto3 리전 명시)를 한 번에 수행합니다.
+        """
+        log_step("1. 로컬 소스 코드 패키징 및 S3 업로드를 시작합니다.")
         
+        # [1] 소스 코드 압축 (ZIP)
         current_dir = os.path.dirname(os.path.abspath(__file__))
         project_root = os.path.abspath(os.path.join(current_dir, ".."))
         src_dir = os.path.join(project_root, "src")
@@ -89,66 +92,59 @@ def pyspark_lab_aws_emr():
             raise FileNotFoundError(f"Source directory not found: {src_dir}")
             
         temp_dir = tempfile.gettempdir()
-        zip_output_path = os.path.join(temp_dir, "pyspark_lab")
+        zip_output_name = os.path.join(temp_dir, "pyspark_lab")
         
         archive_path = shutil.make_archive(
-            base_name=zip_output_path,
+            base_name=zip_output_name,
             format="zip",
             root_dir=src_dir
         )
-        
-        log_step("소스 코드를 ZIP 아카이브로 패키징했습니다.", archive_path=archive_path)
-        return archive_path
+        log_step("로컬 소스 코드를 ZIP으로 패키징했습니다.", archive_path=archive_path)
 
-    @task
-    def upload_file_to_s3(local_path: str, dest_key: str) -> str:
-        """boto3를 사용하여 로컬 파일을 S3에 명시적으로 업로드합니다. 리전 관련 NoSuchBucket 오류를 미연에 방지합니다."""
-        from airflow.providers.amazon.aws.hooks.base_aws import AwsGenericHook
-        import boto3
-        
+        # [2] 버킷명 확인
         context = get_current_context()
         dag_run = context.get("dag_run")
         dag_conf = getattr(dag_run, "conf", {}) or {}
-        
         s3_bucket = resolve_s3_bucket(dag_conf)
-        log_step(f"S3 업로드를 시작합니다: {local_path} -> s3://{s3_bucket}/{dest_key}")
+
+        # [3] Airflow Connection에서 자격 증명 획득 및 boto3 클라이언트 생성 (명시적 서울 리전 지정)
+        from airflow.providers.amazon.aws.hooks.base_aws import AwsGenericHook
+        import boto3
         
-        # Airflow Connection에서 자격 증명 획득
         aws_hook = AwsGenericHook(aws_conn_id=DEFAULT_AWS_CONN_ID, client_type="s3")
         credentials = aws_hook.get_credentials()
         
         # 보안 마스킹 처리하여 가져온 Access Key ID의 앞부분 5글자 출력 테스트
         access_key_preview = credentials.access_key[:5] + "..." if credentials and credentials.access_key else "None"
-        log_step(f"Airflow가 실제 사용하려는 Access Key ID 앞부분: {access_key_preview}")
+        log_step(f"사용하려는 Access Key ID 앞부분: {access_key_preview}")
         
-        # 명시적으로 서울 리전(ap-northeast-2)을 명기하여 클라이언트 생성
         s3_client = boto3.client(
             "s3",
             aws_access_key_id=credentials.access_key,
             aws_secret_access_key=credentials.secret_key,
             region_name="ap-northeast-2"
         )
+
+        # [4] ZIP 파일 업로드
+        zip_s3_key = "pyspark-lab/src/pyspark_lab.zip"
+        log_step(f"ZIP 업로드 시작: {archive_path} -> s3://{s3_bucket}/{zip_s3_key}")
+        s3_client.upload_file(archive_path, s3_bucket, zip_s3_key)
         
-        s3_client.upload_file(local_path, s3_bucket, dest_key)
-        log_step("S3 업로드가 성공적으로 완료되었습니다.")
-        return dest_key
+        # 임시 생성된 ZIP 파일 삭제하여 용량 정리
+        if os.path.exists(archive_path):
+            os.remove(archive_path)
 
-    # 로컬 ZIP 파일을 S3로 복사
-    zip_task = package_source_code()
-    upload_zip = upload_file_to_s3(
-        local_path=zip_task,
-        dest_key="pyspark-lab/src/pyspark_lab.zip"
-    )
+        # [5] metrics.py 스크립트 파일 업로드
+        local_script_path = os.path.join(project_root, "spark/jobs/daily_sales/metrics.py")
+        script_s3_key = "pyspark-lab/jobs/metrics.py"
+        log_step(f"스크립트 업로드 시작: {local_script_path} -> s3://{s3_bucket}/{script_s3_key}")
+        s3_client.upload_file(local_script_path, s3_bucket, script_s3_key)
 
-    # 로컬 PySpark Entrypoint(metrics.py)를 S3로 복사
-    local_script_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
-        "spark/jobs/daily_sales/metrics.py"
-    )
-    upload_script = upload_file_to_s3(
-        local_path=local_script_path,
-        dest_key="pyspark-lab/jobs/metrics.py"
-    )
+        log_step("모든 리소스 파일이 S3에 정상적으로 업로드 완료되었습니다.")
+        return {
+            "zip_s3_key": zip_s3_key,
+            "script_s3_key": script_s3_key
+        }
 
     @task
     def prepare_job_flow_overrides() -> dict:
@@ -312,11 +308,12 @@ def pyspark_lab_aws_emr():
     )
 
     # 태스크 흐름 정의
+    upload_assets = prepare_and_upload_assets()
     overrides_task = prepare_job_flow_overrides()
     step_spec_task = prepare_spark_step()
 
     # 의존 파일 업로드 후 클러스터에 Step 추가 가능
-    [upload_zip, upload_script] >> add_spark_step
+    upload_assets >> add_spark_step
 
     # 클러스터 라이프사이클 관리
     overrides_task >> create_emr_cluster >> add_spark_step >> watch_spark_step

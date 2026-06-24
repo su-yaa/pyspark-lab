@@ -117,6 +117,10 @@ def pyspark_lab_aws_emr():
         aws_hook = AwsGenericHook(aws_conn_id=DEFAULT_AWS_CONN_ID, client_type="s3")
         credentials = aws_hook.get_credentials()
         
+        # 보안 마스킹 처리하여 가져온 Access Key ID의 앞부분 5글자 출력 테스트
+        access_key_preview = credentials.access_key[:5] + "..." if credentials and credentials.access_key else "None"
+        log_step(f"Airflow가 실제 사용하려는 Access Key ID 앞부분: {access_key_preview}")
+        
         # 명시적으로 서울 리전(ap-northeast-2)을 명기하여 클라이언트 생성
         s3_client = boto3.client(
             "s3",

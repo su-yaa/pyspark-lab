@@ -32,6 +32,38 @@ def log_step(message: str, **details: object) -> None:
     print(f"[pyspark-lab-emr] {message}{suffix}", flush=True)
 
 
+def resolve_s3_bucket(dag_conf: dict) -> str:
+    """DAG conf, Airflow Variable, AWS Connection Extra 순으로 S3 버킷명을 안전하게 탐색합니다."""
+    # 1. DAG 실행 시 넘겨준 conf 확인
+    s3_bucket = dag_conf.get("s3_bucket")
+    
+    # 2. Airflow Variable 확인
+    if not s3_bucket:
+        try:
+            s3_bucket = Variable.get("pyspark_lab_s3_bucket", default_var=None)
+        except Exception:
+            s3_bucket = None
+            
+    # 3. AWS Connection ('aws_default')의 Extra JSON 필드 확인
+    if not s3_bucket:
+        try:
+            from airflow.hooks.base import BaseHook
+            conn = BaseHook.get_connection(DEFAULT_AWS_CONN_ID)
+            s3_bucket = (conn.extra_dejson or {}).get("s3_bucket")
+        except Exception:
+            s3_bucket = None
+            
+    if not s3_bucket:
+        raise ValueError(
+            "S3 bucket name must be provided via: "
+            "1) DAG conf ('s3_bucket'), "
+            "2) Airflow Variable ('pyspark_lab_s3_bucket'), "
+            "or 3) AWS Connection extra ('s3_bucket')."
+        )
+        
+    return str(s3_bucket)
+
+
 @dag(
     dag_id="pyspark_lab_aws_emr",
     description="Provision an EMR on EC2 cluster (Primary, Core, Task nodes) and run Spark step with monitoring options.",
@@ -46,7 +78,7 @@ def pyspark_lab_aws_emr():
     
     @task
     def package_source_code() -> str:
-        """EMR에서 참조할 수 있도록 로컬 src/pyspark_lab 폴더를 ZIP 파일로 압축합니다."""
+        """EMR에서 참조할 수 있도록 로컬 src/pyspark_lab folder를 ZIP 파일로 압축합니다."""
         log_step("1. 로컬 소스 코드 패키징을 시작합니다.")
         
         current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -78,10 +110,7 @@ def pyspark_lab_aws_emr():
         dag_run = context.get("dag_run")
         dag_conf = getattr(dag_run, "conf", {}) or {}
         
-        s3_bucket = dag_conf.get("s3_bucket") or Variable.get("pyspark_lab_s3_bucket", "")
-        if not s3_bucket:
-            raise ValueError("S3 bucket name must be provided via DAG conf or Variable.")
-            
+        s3_bucket = resolve_s3_bucket(dag_conf)
         log_step(f"S3 업로드를 시작합니다: {local_path} -> s3://{s3_bucket}/{dest_key}")
         
         # Airflow Connection에서 자격 증명 획득
@@ -124,9 +153,7 @@ def pyspark_lab_aws_emr():
         dag_run = context.get("dag_run")
         dag_conf = getattr(dag_run, "conf", {}) or {}
         
-        s3_bucket = dag_conf.get("s3_bucket") or Variable.get("pyspark_lab_s3_bucket", "")
-        if not s3_bucket:
-            raise ValueError("S3 bucket name must be provided via DAG conf or Variable.")
+        s3_bucket = resolve_s3_bucket(dag_conf)
             
         # 모니터링 실습을 위해 기본적으로 완료 후에도 수동 종료시까지 유지(True)하도록 디폴트 설정
         keep_alive = dag_conf.get("keep_job_flow_alive", True)
@@ -208,7 +235,7 @@ def pyspark_lab_aws_emr():
         dag_run = context.get("dag_run")
         dag_conf = getattr(dag_run, "conf", {}) or {}
         
-        s3_bucket = dag_conf.get("s3_bucket") or Variable.get("pyspark_lab_s3_bucket", "")
+        s3_bucket = resolve_s3_bucket(dag_conf)
         run_date = dag_conf.get("run_date") or DEFAULT_RUN_DATE
 
         entrypoint = f"s3://{s3_bucket}/pyspark-lab/jobs/metrics.py"
